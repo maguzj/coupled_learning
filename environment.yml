@@ -1,0 +1,11 @@
+name: coupled_learning
+channels:
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pybind11
+  - cython
+  - jupyter
+  - matplotlib
+  - scipy
+  - tqdm
