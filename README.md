@@ -31,7 +31,11 @@ Activate the environment, install numpy using pip and set the pip to be recogniz
 
 ```bash
 conda activate cl
-pip install --no-binary :all: -no-use-pep157 numpy
+```
+```bash
+pip install --no-binary :all: --no-use-pep517 numpy
+```
+```bash
 conda config --set pip_interop_enabled true
 ```
 
@@ -49,6 +53,8 @@ Then install the higher level dependencies.
 ```bash
 pip install -r requirements.txt
 ```
+
+(for more information see: https://gist.github.com/MarkDana/a9481b8134cf38a556cf23e1e815dafb)
 
 
 3. Several jupyter notebooks are provided for getting started.
