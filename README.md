@@ -7,7 +7,7 @@
 git clone git@github.com:maguzj/coupled_learning.git
 ```
 
-2 The main directory contains an environment.yml file for easily setting up a conda environment, named cl, with all the package dependencies:
+2. The main directory contains an environment.yml file for easily setting up a conda environment, named cl, with all the package dependencies:
 (For M1/M2 computers see next section)
 
 ```bash
@@ -20,7 +20,7 @@ To activate environment, run
 conda activate cl
 ```
 
-2.1  For M1/M2 computers only. We have to build numpy with the accelerator.
+2.1.  For M1/M2 computers only. We have to build numpy with the accelerator.
 
 ```bash
 conda env create --file=environment-M1-M2.yml
