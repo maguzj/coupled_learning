@@ -12,7 +12,7 @@ git clone git@github.com:maguzj/coupled_learning.git
 **For Intel chips:** The main directory contains an environment.yml file for easily setting up a conda environment, named cl, with all the package dependencies:
 
 ```bash
-conda env create --file=environment.yml
+conda env create --file=environment-intel.yml
 ```
 
 To activate the environment, run
