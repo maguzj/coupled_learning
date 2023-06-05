@@ -1,0 +1,138 @@
+import numpy as np
+from circuit_utils import Circuit
+from tqdm import tqdm
+
+class CL(Circuit):
+    '''
+    Class for coupled learning in linear circuits.
+
+    Attributes
+    ----------
+    graph : networkx.Graph
+        Graph of the circuit.
+    n : int
+        Number of nodes in the circuit.
+    ne : int
+        Number of edges in the circuit.
+    pts : np.array
+        Positions of the nodes.
+    '''
+    def __init__(self, graph, conductances, learning_rate=1.0, learning_step = 0):
+        ''' Initialize the coupled learning circuit.
+
+        Parameters
+        ----------
+        graph : networkx.Graph
+            Graph of the circuit.
+        conductances : np.array
+            Conductances of the edges of the circuit.
+        '''
+        super().__init__(graph)
+        self.setConductances(conductances)
+        self.learning_rate = learning_rate
+        self.learning_step = learning_step
+        self.epoch = 0
+
+    def _add_source(self, indices_source, inputs_source):
+        ''' Add source nodes and their inputs to the circuit.
+
+        Parameters
+        ----------
+        indices_source : np.array
+            Indices of the nodes of the source.
+        inputs_source : np.array
+            Inputs of the source.
+        '''
+        # check they have the same length
+        assert len(indices_source) == len(inputs_source), 'indices_source and inputs_source must have the same length'
+        self.indices_source = indices_source
+        self.inputs_source = inputs_source
+
+    def _add_target(self, indices_target, outputs_target):
+        ''' Add target nodes and their outputs to the circuit.
+
+        Parameters
+        ----------
+        indices_target : np.array
+            Indices of the nodes of the target.
+        outputs_target : np.array
+            Outputs of the target.
+        '''
+        # check they have the same length
+        assert len(indices_target) == len(outputs_target), 'indices_target and outputs_target must have the same length'
+        self.indices_target = indices_target
+        self.outputs_target = outputs_target
+
+    def set_task(self, indices_source, inputs_source, indices_target, outputs_target):
+        ''' Set the task of the circuit.
+
+        Parameters
+        ----------
+        indices_source : np.array
+            Indices of the nodes of the source.
+        inputs_source : np.array
+            Inputs of the source.
+        indices_target : np.array
+            Indices of the nodes of the target.
+        outputs_target : np.array
+            Outputs of the target.
+        
+        Returns
+        -------
+        Q_free : scipy.sparse.csr_matrix
+            Constraint matrix Q_free: a sparse constraint rectangular matrix of size n x len(indices_source). Its entries are only 1 or 0.
+        Q_clamped : scipy.sparse.csr_matrix
+            Constraint matrix Q_clamped: a sparse constraint rectangular matrix of size n x (len(indices_source) + len(indices_target)). Its entries are only 1 or 0.
+        '''
+        self._add_source(indices_source, inputs_source)
+        self._add_target(indices_target, outputs_target)
+        # Compute the constraint matrices
+        self.Q_free = self.constraint_matrix(self.indices_source)
+        self.Q_clamped = self.constraint_matrix(np.concatenate((self.indices_source, self.indices_target)))
+        return self.Q_free, self.Q_clamped
+        
+
+    def _step_CL(self, eta = 0.001):
+        ''' Perform a step of coupled learning. '''
+        free_state = self.solve(self.Q_free, self.inputs_source)
+        nudge = free_state[self.indices_target] + eta*(self.outputs_target - free_state[self.indices_target])
+        clamped_state = self.solve(self.Q_clamped, np.concatenate((self.inputs_source, nudge)))
+
+        # voltage drop
+        voltage_drop_free = self.incidence_matrix.T.dot(free_state)
+        voltage_drop_clamped = self.incidence_matrix.T.dot(clamped_state)
+
+        # Update the conductances
+        delta_conductances = -1.0/eta * (voltage_drop_clamped**2 - voltage_drop_free**2)
+        self.conductances = self.conductances + self.learning_rate*delta_conductances
+
+
+        self.learning_step += 1
+        
+        return free_state, voltage_drop_free, delta_conductances, self.conductances
+    
+    def iterate_CL(self, n_steps, eta = 0.001):
+        ''' Iterate coupled learning for n_steps. '''
+        for i in range(n_steps):
+            free_state, voltage_drop_free , delta_conductances , conductances = self._step_CL(eta)
+        return free_state, voltage_drop_free , delta_conductances , conductances
+    
+    def MSE_loss(self, free_state):
+        ''' Compute the MSE loss. '''
+        return 0.5*np.mean((free_state[self.indices_target] - self.outputs_target)**2)
+    
+    def train(self, n_epochs, n_steps_per_epoch, eta = 0.001, verbose = True, pbar = False):
+        ''' Train the circuit for n_epochs. '''
+        self.losses = []
+        if pbar:
+            epochs = tqdm(range(n_epochs))
+        else:
+            epochs = range(n_epochs)
+        for epoch in epochs:
+            free_state, voltage_drop_free , delta_conductances , conductances = self.iterate_CL(n_steps_per_epoch, eta)
+            self.losses.append(self.MSE_loss(free_state))
+            if verbose:
+                print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
+            self.epoch += 1
+        return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
+    
