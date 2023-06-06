@@ -2,6 +2,7 @@ import numpy as np
 from circuit_utils import Circuit
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+import pickle
 
 class CL(Circuit):
     '''
@@ -159,6 +160,11 @@ class CL(Circuit):
             self.epoch += 1
         return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
     
+    def save(self, path):
+        ''' Save the circuit. '''
+        with open(path, 'wb') as f:
+            pickle.dump(self, f)
+
 
     '''
 	*****************************************************************************************************
@@ -189,3 +195,13 @@ class CL(Circuit):
         axs.set_yticks([])
         # set the title of each subplot to be the corresponding eigenvalue in scientific notation
         axs.set_title(title)
+
+
+
+
+
+def load_circuit(path):
+    ''' Load a circuit. '''
+    with open(path, 'rb') as f:
+        circuit = pickle.load(f)
+    return circuit
