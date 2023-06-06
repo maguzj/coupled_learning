@@ -4,6 +4,7 @@ import networkx as nx
 from scipy.sparse import csr_matrix
 from scipy.sparse import bmat
 from scipy.sparse.linalg import spsolve
+import matplotlib.pyplot as plt
 
 class Circuit(object):
     ''' Class to simulate a circuit with trainable conductances 
@@ -154,5 +155,49 @@ class Circuit(object):
 	*****************************************************************************************************
     '''
 
-    def printNetwork(self):
-        pass
+    def plot_node_state(self, node_state, title = None, lw = 0.5, cmap = 'RdYlBu_r', size_factor = 100):
+        ''' Plot the state of the nodes in the graph.
+
+        Parameters
+        ----------
+        node_state : np.array
+            State of the nodes in the graph. node_state has size n.
+        '''
+        posX = self.pts[:,0]
+        posY = self.pts[:,1]
+        norm = plt.Normalize(vmin=np.min(node_state), vmax=np.max(node_state))
+        fig, axs = plt.subplots(1,1, figsize = (4,4), constrained_layout=True,sharey=True)
+        axs.scatter(posX, posY, s = size_factor*np.abs(node_state[:]), c = node_state[:],edgecolors = 'black',linewidth = lw,  cmap = cmap, norm = norm)
+        axs.set( aspect='equal')
+        # remove ticks
+        axs.set_xticks([])
+        axs.set_yticks([])
+        # show the colorbar
+        fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=axs, shrink=0.5)
+        # set the title of each subplot to be the corresponding eigenvalue in scientific notation
+        axs.set_title(title)
+
+    def plot_edge_state(self, edge_state, title = None,lw = 0.5, cmap = 'RdYlBu_r'):
+        ''' Plot the state of the edges in the graph.
+
+        Parameters
+        ----------
+        edge_state : np.array
+            State of the edges in the graph. edge_state has size ne.
+        '''
+        _cmap = plt.cm.get_cmap(cmap)
+        pos_edges = np.array([np.array([self.graph.nodes[edge[0]]['pos'], self.graph.nodes[edge[1]]['pos']]).T for edge in self.graph.edges()])
+        norm = plt.Normalize(vmin=np.min(edge_state), vmax=np.max(edge_state))
+        fig, axs = plt.subplots(1,1, figsize = (4,4), constrained_layout=True,sharey=True)
+        for i in range(len(pos_edges)):
+            axs.plot(pos_edges[i,0], pos_edges[i,1], color = _cmap(norm(edge_state[i])))
+        axs.set( aspect='equal')
+        # remove ticks
+        axs.set_xticks([])
+        axs.set_yticks([])
+        # show the colorbar
+        fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=axs, shrink=0.5)
+        # set the title of each subplot to be the corresponding eigenvalue in scientific notation
+        axs.set_title(title)
+
+ 

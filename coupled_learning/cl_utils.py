@@ -1,6 +1,7 @@
 import numpy as np
 from circuit_utils import Circuit
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 class CL(Circuit):
     '''
@@ -17,7 +18,7 @@ class CL(Circuit):
     pts : np.array
         Positions of the nodes.
     '''
-    def __init__(self, graph, conductances, learning_rate=1.0, learning_step = 0):
+    def __init__(self, graph, conductances, learning_rate=1.0, learning_step = 0, min_k = 1.e-6, max_k = 1.e6):
         ''' Initialize the coupled learning circuit.
 
         Parameters
@@ -32,6 +33,13 @@ class CL(Circuit):
         self.learning_rate = learning_rate
         self.learning_step = learning_step
         self.epoch = 0
+        self.min_k = min_k
+        self.max_k = max_k
+
+    def _clip_conductances(self):
+        ''' Clip the conductances to be between min_k and max_k.
+        '''
+        self.conductances = np.clip(self.conductances, self.min_k, self.max_k)
 
     def _add_source(self, indices_source, inputs_source):
         ''' Add source nodes and their inputs to the circuit.
@@ -90,6 +98,20 @@ class CL(Circuit):
         self.Q_free = self.constraint_matrix(self.indices_source)
         self.Q_clamped = self.constraint_matrix(np.concatenate((self.indices_source, self.indices_target)))
         return self.Q_free, self.Q_clamped
+    
+    def get_free_state(self):
+        ''' Return the free state of the circuit for the current task. '''
+        # determine if a task was given
+        if not hasattr(self, 'Q_free'):
+            raise ValueError('No task was given to the circuit. Use set_task(indices_source, inputs_source, indices_target, outputs_target) to set the task.')
+        return self.solve(self.Q_free, self.inputs_source)
+    
+    def get_power_state(self):
+        ''' Return the power state of the circuit for the current task. '''
+        free_state = self.get_free_state()
+        voltage_drop_free = self.incidence_matrix.T.dot(free_state)
+        return self.conductances*(voltage_drop_free**2)
+
         
 
     def _step_CL(self, eta = 0.001):
@@ -105,6 +127,7 @@ class CL(Circuit):
         # Update the conductances
         delta_conductances = -1.0/eta * (voltage_drop_clamped**2 - voltage_drop_free**2)
         self.conductances = self.conductances + self.learning_rate*delta_conductances
+        self._clip_conductances()
 
 
         self.learning_step += 1
@@ -136,3 +159,33 @@ class CL(Circuit):
             self.epoch += 1
         return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
     
+
+    '''
+	*****************************************************************************************************
+	*****************************************************************************************************
+
+										PLOTTING AND ANIMATION
+
+	*****************************************************************************************************
+	*****************************************************************************************************
+    '''
+
+    def plot_circuit(self, title=None, lw = 0.5, point_size = 100, highlight_nodes = True):
+        ''' Plot the circuit.
+        '''
+        posX = self.pts[:,0]
+        posY = self.pts[:,1]
+        pos_edges = np.array([np.array([self.graph.nodes[edge[0]]['pos'], self.graph.nodes[edge[1]]['pos']]).T for edge in self.graph.edges()])
+        fig, axs = plt.subplots(1,1, figsize = (4,4), constrained_layout=True,sharey=True)
+        for i in range(len(pos_edges)):
+            axs.plot(pos_edges[i,0], pos_edges[i,1], c = 'black', lw = lw, zorder = 1)
+        axs.scatter(posX, posY, s = point_size, c = 'black', zorder = 2)
+        if highlight_nodes:
+            axs.scatter(posX[self.indices_source], posY[self.indices_source], s = 2*point_size, c = 'red', zorder = 10)
+            axs.scatter(posX[self.indices_target], posY[self.indices_target], s = 2*point_size, c = 'blue', zorder = 10)
+        axs.set( aspect='equal')
+        # remove ticks
+        axs.set_xticks([])
+        axs.set_yticks([])
+        # set the title of each subplot to be the corresponding eigenvalue in scientific notation
+        axs.set_title(title)
