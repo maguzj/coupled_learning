@@ -58,3 +58,10 @@ pip install -r requirements.txt
 
 
 3. Several jupyter notebooks are provided for getting started.
+
+
+
+## TO DO LIST:
+
+- Implement edge allostery
+- Implement epochs :construction:
