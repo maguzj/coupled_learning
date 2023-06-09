@@ -155,7 +155,7 @@ class Circuit(object):
 	*****************************************************************************************************
     '''
 
-    def plot_node_state(self, node_state, title = None, lw = 0.5, cmap = 'RdYlBu_r', size_factor = 100):
+    def plot_node_state(self, node_state, title = None, lw = 0.5, cmap = 'RdYlBu_r', size_factor = 100, figsize = (4,4)):
         ''' Plot the state of the nodes in the graph.
 
         Parameters
@@ -166,7 +166,7 @@ class Circuit(object):
         posX = self.pts[:,0]
         posY = self.pts[:,1]
         norm = plt.Normalize(vmin=np.min(node_state), vmax=np.max(node_state))
-        fig, axs = plt.subplots(1,1, figsize = (4,4), constrained_layout=True,sharey=True)
+        fig, axs = plt.subplots(1,1, figsize = figsize, constrained_layout=True,sharey=True)
         axs.scatter(posX, posY, s = size_factor*np.abs(node_state[:]), c = node_state[:],edgecolors = 'black',linewidth = lw,  cmap = cmap, norm = norm)
         axs.set( aspect='equal')
         # remove ticks
@@ -177,7 +177,7 @@ class Circuit(object):
         # set the title of each subplot to be the corresponding eigenvalue in scientific notation
         axs.set_title(title)
 
-    def plot_edge_state(self, edge_state, title = None,lw = 0.5, cmap = 'RdYlBu_r'):
+    def plot_edge_state(self, edge_state, title = None,lw = 0.5, cmap = 'RdYlBu_r', figsize = (4,4)):
         ''' Plot the state of the edges in the graph.
 
         Parameters
@@ -188,7 +188,7 @@ class Circuit(object):
         _cmap = plt.cm.get_cmap(cmap)
         pos_edges = np.array([np.array([self.graph.nodes[edge[0]]['pos'], self.graph.nodes[edge[1]]['pos']]).T for edge in self.graph.edges()])
         norm = plt.Normalize(vmin=np.min(edge_state), vmax=np.max(edge_state))
-        fig, axs = plt.subplots(1,1, figsize = (4,4), constrained_layout=True,sharey=True)
+        fig, axs = plt.subplots(1,1, figsize = figsize, constrained_layout=True,sharey=True)
         for i in range(len(pos_edges)):
             axs.plot(pos_edges[i,0], pos_edges[i,1], color = _cmap(norm(edge_state[i])))
         axs.set( aspect='equal')
