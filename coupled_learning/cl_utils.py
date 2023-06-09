@@ -3,6 +3,7 @@ from circuit_utils import Circuit
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import pickle
+from scipy.sparse import csr_matrix
 
 class CL(Circuit):
     '''
@@ -59,7 +60,7 @@ class CL(Circuit):
         self.indices_source = indices_source
         self.inputs_source = inputs_source
 
-    def _add_target(self, indices_target, outputs_target):
+    def _add_target(self, indices_target, outputs_target, target_type):
         ''' Add target nodes and their outputs to the circuit.
 
         Parameters
@@ -68,13 +69,16 @@ class CL(Circuit):
             Indices of the nodes of the target.
         outputs_target : np.array
             Outputs of the target.
+        target_type : string
+            target type, "node" or "edge"
         '''
         # check they have the same length
         assert len(indices_target) == len(outputs_target), 'indices_target and outputs_target must have the same length'
         self.indices_target = indices_target
         self.outputs_target = outputs_target
+        self.target_type = target_type
 
-    def set_task(self, indices_source, inputs_source, indices_target, outputs_target):
+    def set_task(self, indices_source, inputs_source, indices_target, outputs_target, target_type='node'):
         ''' Set the task of the circuit.
 
         Parameters
@@ -84,7 +88,8 @@ class CL(Circuit):
         inputs_source : np.array
             Inputs of the source.
         indices_target : np.array
-            Indices of the nodes of the target.
+            If target is node, indices of the nodes of the target.
+            If target is edge, array with edge index, and nodes i, j. 
         outputs_target : np.array
             Outputs of the target.
         
@@ -96,10 +101,20 @@ class CL(Circuit):
             Constraint matrix Q_clamped: a sparse constraint rectangular matrix of size n x (len(indices_source) + len(indices_target)). Its entries are only 1 or 0.
         '''
         self._add_source(indices_source, inputs_source)
-        self._add_target(indices_target, outputs_target)
+        self._add_target(indices_target, outputs_target, target_type)
         # Compute the constraint matrices
         self.Q_free = self.constraint_matrix(self.indices_source)
-        self.Q_clamped = self.constraint_matrix(np.concatenate((self.indices_source, self.indices_target)))
+        if target_type == 'node':
+            self.Q_clamped = self.constraint_matrix(np.concatenate((self.indices_source, self.indices_target)))
+            
+        elif target_type == 'edge':
+            constraintClamped = np.zeros((self.n, self.indices_source.shape[0] + self.indices_target.shape[0]))
+            constraintClamped[self.indices_source, np.arange(self.indices_source.shape[0])] = 1
+            constraintClamped[self.indices_target[:,1], self.indices_source.shape[0]+ np.arange(self.indices_target.shape[0])] = 1
+            constraintClamped[self.indices_target[:,2], self.indices_source.shape[0]+ np.arange(self.indices_target.shape[0])] = -1
+            clampedStateConstraintMatrix = csr_matrix(constraintClamped)
+            self.Q_clamped = clampedStateConstraintMatrix
+
         return self.Q_free, self.Q_clamped
     
     def get_free_state(self):
@@ -120,7 +135,19 @@ class CL(Circuit):
     def _step_CL(self, eta = 0.001):
         ''' Perform a step of coupled learning. '''
         free_state = self.solve(self.Q_free, self.inputs_source)
-        nudge = free_state[self.indices_target] + eta*(self.outputs_target - free_state[self.indices_target])
+        # nudge = free_state[self.indices_target] + eta*(self.outputs_target - free_state[self.indices_target])
+
+
+        if self.target_type == 'node':
+            nudge = free_state[self.indices_target] + eta * (self.outputs_target - free_state[self.indices_target])
+
+        elif self.target_type == 'edge':
+
+            DP = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
+            nudgeEdge = DP[self.indices_target] + eta * (self.outputs_target - DP[self.indices_target])
+            nudge = [free_state[targetNode] + (-1)**(it%2) * nudgeEdge[np.floor(it/2, dtype=np.int8)]/2  for it, targetNode in enumerate(self.indices_target[:,1:].flatten())]
+
+
         clamped_state = self.solve(self.Q_clamped, np.concatenate((self.inputs_source, nudge)))
 
         # voltage drop
@@ -132,12 +159,11 @@ class CL(Circuit):
         self.conductances = self.conductances + self.learning_rate*delta_conductances
         self._clip_conductances()
 
-
         self.learning_step += 1
         
         return free_state, voltage_drop_free, delta_conductances, self.conductances
     
-    def iterate_CL(self, n_steps, eta = 0.001):
+    def iterate_CL(self, n_steps, target_type, eta = 0.001):
         ''' Iterate coupled learning for n_steps. '''
         for i in range(n_steps):
             free_state, voltage_drop_free , delta_conductances , conductances = self._step_CL(eta)
