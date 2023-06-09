@@ -36,6 +36,8 @@ class CL(Circuit):
         self.epoch = 0
         self.min_k = min_k
         self.max_k = max_k
+        self.losses = []
+        self.end_epoch = []
 
     def _clip_conductances(self):
         ''' Clip the conductances to be between min_k and max_k.
@@ -145,25 +147,46 @@ class CL(Circuit):
         ''' Compute the MSE loss. '''
         return 0.5*np.mean((free_state[self.indices_target] - self.outputs_target)**2)
     
-    def train(self, n_epochs, n_steps_per_epoch, eta = 0.001, verbose = True, pbar = False):
-        ''' Train the circuit for n_epochs. '''
-        self.losses = []
+    def train(self, n_epochs, n_steps_per_epoch, eta = 0.001, verbose = True, pbar = False, log_spaced = False):
+        ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of coupled learning.
+        If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
+        '''
         if pbar:
             epochs = tqdm(range(n_epochs))
         else:
             epochs = range(n_epochs)
-        for epoch in epochs:
-            free_state, voltage_drop_free , delta_conductances , conductances = self.iterate_CL(n_steps_per_epoch, eta)
-            self.losses.append(self.MSE_loss(free_state))
-            if verbose:
-                print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
-            self.epoch += 1
-        return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
+        if log_spaced:
+            n_steps = n_epochs * n_steps_per_epoch
+            n_steps_per_epoch = log_partition(n_steps, n_epochs)
+            for epoch in epochs:
+                free_state, voltage_drop_free , delta_conductances , conductances = self.iterate_CL(n_steps_per_epoch[epoch], eta)
+                self.losses.append(self.MSE_loss(free_state))
+                if verbose:
+                    print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
+                self.epoch += 1
+                self.end_epoch.append(self.learning_step)
+            return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
+        else:
+            for epoch in epochs:
+                free_state, voltage_drop_free , delta_conductances , conductances = self.iterate_CL(n_steps_per_epoch, eta)
+                self.losses.append(self.MSE_loss(free_state))
+                if verbose:
+                    print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
+                self.epoch += 1
+                self.end_epoch.append(self.learning_step)
+            return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
     
     def save(self, path):
         ''' Save the circuit. '''
         with open(path, 'wb') as f:
             pickle.dump(self, f)
+
+    def reset_training(self):
+        ''' Reset the training. '''
+        self.learning_step = 0
+        self.epoch = 0
+        self.end_epoch = []
+        self.losses = []
 
 
     '''
@@ -176,19 +199,19 @@ class CL(Circuit):
 	*****************************************************************************************************
     '''
 
-    def plot_circuit(self, title=None, lw = 0.5, point_size = 100, highlight_nodes = True):
+    def plot_circuit(self, title=None, lw = 0.5, point_size = 100, highlight_nodes = True, figsize = (4,4), highlighted_point_size = 200):
         ''' Plot the circuit.
         '''
         posX = self.pts[:,0]
         posY = self.pts[:,1]
         pos_edges = np.array([np.array([self.graph.nodes[edge[0]]['pos'], self.graph.nodes[edge[1]]['pos']]).T for edge in self.graph.edges()])
-        fig, axs = plt.subplots(1,1, figsize = (4,4), constrained_layout=True,sharey=True)
+        fig, axs = plt.subplots(1,1, figsize = figsize, constrained_layout=True,sharey=True)
         for i in range(len(pos_edges)):
             axs.plot(pos_edges[i,0], pos_edges[i,1], c = 'black', lw = lw, zorder = 1)
         axs.scatter(posX, posY, s = point_size, c = 'black', zorder = 2)
         if highlight_nodes:
-            axs.scatter(posX[self.indices_source], posY[self.indices_source], s = 2*point_size, c = 'red', zorder = 10)
-            axs.scatter(posX[self.indices_target], posY[self.indices_target], s = 2*point_size, c = 'blue', zorder = 10)
+            axs.scatter(posX[self.indices_source], posY[self.indices_source], s = highlighted_point_size, c = 'red', zorder = 10)
+            axs.scatter(posX[self.indices_target], posY[self.indices_target], s = highlighted_point_size, c = 'blue', zorder = 10)
         axs.set( aspect='equal')
         # remove ticks
         axs.set_xticks([])
@@ -205,3 +228,27 @@ def load_circuit(path):
     with open(path, 'rb') as f:
         circuit = pickle.load(f)
     return circuit
+
+
+
+def log_partition(N, M):
+    if M > N:
+        raise ValueError('M cannot be larger than N')
+    # Create a logarithmically spaced array between 0 and N
+    log_space = np.logspace(0, np.log10(N), M, endpoint=True, base=10.0)
+    # Round the elements to the nearest integers
+    log_space = np.rint(log_space).astype(int)
+    # Calculate the differences between consecutive elements
+    intervals = np.diff(log_space)
+    # Ensure that no interval has a size of 0
+    for i in range(len(intervals)):
+        if intervals[i] == 0:
+            intervals[i] += 1
+    # Append N (the last element of the sequence) to the intervals
+    intervals = np.append(intervals, N)
+    # Adjust the intervals until they add up to N
+    while np.sum(intervals) < N:
+        intervals[np.argmin(intervals)] += 1
+    while np.sum(intervals) > N:
+        intervals[np.argmax(intervals)] -= 1
+    return intervals.tolist()
