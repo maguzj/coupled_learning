@@ -144,9 +144,7 @@ class CL(Circuit):
         elif self.target_type == 'edge':
 
             DP = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
-            nudgeEdge = DP[self.indices_target] + eta * (self.outputs_target - DP[self.indices_target])
-            nudge = [free_state[targetNode] + (-1)**(it%2) * nudgeEdge[np.floor(it/2, dtype=np.int8)]/2  for it, targetNode in enumerate(self.indices_target[:,1:].flatten())]
-
+            nudge = DP + eta * (self.outputs_target - DP)
 
         clamped_state = self.solve(self.Q_clamped, np.concatenate((self.inputs_source, nudge)))
 
@@ -171,7 +169,12 @@ class CL(Circuit):
     
     def MSE_loss(self, free_state):
         ''' Compute the MSE loss. '''
-        return 0.5*np.mean((free_state[self.indices_target] - self.outputs_target)**2)
+        if self.target_type == 'node':
+            return 0.5*np.mean((free_state[self.indices_target] - self.outputs_target)**2)
+        elif self.target_type == 'edge':
+            freeState_DV = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
+            return 0.5*np.mean((freeState_DV - self.outputs_target)**2)
+
     
     def train(self, n_epochs, n_steps_per_epoch, eta = 0.001, verbose = True, pbar = False, log_spaced = False):
         ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of coupled learning.
@@ -237,7 +240,10 @@ class CL(Circuit):
         axs.scatter(posX, posY, s = point_size, c = 'black', zorder = 2)
         if highlight_nodes:
             axs.scatter(posX[self.indices_source], posY[self.indices_source], s = highlighted_point_size, c = 'red', zorder = 10)
-            axs.scatter(posX[self.indices_target], posY[self.indices_target], s = highlighted_point_size, c = 'blue', zorder = 10)
+            try:
+                axs.scatter(posX[self.indices_target[:,1:]], posY[self.indices_target[:,1:]], s = highlighted_point_size, c = 'blue', zorder = 10)
+            except:
+                axs.scatter(posX[self.indices_target], posY[self.indices_target], s = highlighted_point_size, c = 'blue', zorder = 10)
         axs.set( aspect='equal')
         # remove ticks
         axs.set_xticks([])
