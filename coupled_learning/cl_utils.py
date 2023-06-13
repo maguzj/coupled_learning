@@ -73,7 +73,6 @@ class CL(Circuit):
             target type, "node" or "edge"
         '''
         # check they have the same length
-        print(indices_target, outputs_target)
         assert len(indices_target) == len(outputs_target), 'indices_target and outputs_target must have the same length'
         self.indices_target = indices_target
         self.outputs_target = outputs_target
@@ -146,7 +145,6 @@ class CL(Circuit):
 
             DP = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
             nudge = DP + eta * (self.outputs_target - DP)
-            # nudge = [free_state[targetNode] + (-1)**(it%2) * nudgeEdge[int(it/2)]/2  for it, targetNode in enumerate(self.indices_target[:,1:].flatten())]
 
         clamped_state = self.solve(self.Q_clamped, np.concatenate((self.inputs_source, nudge)))
 
