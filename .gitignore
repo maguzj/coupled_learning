@@ -166,3 +166,7 @@ cython_debug/
 
 # For Marcelo:
 notebooks/
+scripts/
+local*
+simulationData/
+*.pkl

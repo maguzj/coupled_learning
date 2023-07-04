@@ -63,5 +63,5 @@ pip install -r requirements.txt
 
 ## TO DO LIST:
 
-- Implement edge allostery
+- Implement edge allostery :white_check_mark:
 - Implement epochs :white_check_mark:

@@ -1,5 +1,5 @@
 import numpy as np
-from circuit_utils import Circuit
+from .circuit_utils import Circuit
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import pickle
@@ -20,7 +20,7 @@ class CL(Circuit):
     pts : np.array
         Positions of the nodes.
     '''
-    def __init__(self, graph, conductances, learning_rate=1.0, learning_step = 0, min_k = 1.e-6, max_k = 1.e6):
+    def __init__(self, graph, conductances, learning_rate=1.0, learning_step = 0, min_k = 1.e-6, max_k = 1.e6, name = 'CL'):
         ''' Initialize the coupled learning circuit.
 
         Parameters
@@ -39,6 +39,17 @@ class CL(Circuit):
         self.max_k = max_k
         self.losses = []
         self.end_epoch = []
+        self.name = name
+    
+    def set_name(self, name):
+        ''' Set the name of the learning circuit.
+
+        Parameters
+        ----------
+        name : string
+            Name of the circuit.
+        '''
+        self.name = name
 
     def _clip_conductances(self):
         ''' Clip the conductances to be between min_k and max_k.
@@ -76,7 +87,10 @@ class CL(Circuit):
         assert len(indices_target) == len(outputs_target), 'indices_target and outputs_target must have the same length'
         self.indices_target = indices_target
         self.outputs_target = outputs_target
+        # check that the target type is valid
+        assert target_type in ['node', 'edge'], 'target_type must be "node" or "edge"'
         self.target_type = target_type
+        
 
     def set_task(self, indices_source, inputs_source, indices_target, outputs_target, target_type='node'):
         ''' Set the task of the circuit.
@@ -92,6 +106,8 @@ class CL(Circuit):
             If target is edge, array with edge index, and nodes i, j. 
         outputs_target : np.array
             Outputs of the target.
+        target_type : string
+            target type, "node" or "edge"
         
         Returns
         -------
@@ -104,10 +120,9 @@ class CL(Circuit):
         self._add_target(indices_target, outputs_target, target_type)
         # Compute the constraint matrices
         self.Q_free = self.constraint_matrix(self.indices_source)
-        if target_type == 'node':
-            self.Q_clamped = self.constraint_matrix(np.concatenate((self.indices_source, self.indices_target)))
-            
-        elif target_type == 'edge':
+        if self.target_type == 'node':
+            self.Q_clamped = self.constraint_matrix(np.concatenate((self.indices_source, self.indices_target)))    
+        elif self.target_type == 'edge':
             constraintClamped = np.zeros((self.n, self.indices_source.shape[0] + self.indices_target.shape[0]))
             constraintClamped[self.indices_source, np.arange(self.indices_source.shape[0])] = 1
             constraintClamped[self.indices_target[:,1], self.indices_source.shape[0]+ np.arange(self.indices_target.shape[0])] = 1
@@ -161,7 +176,7 @@ class CL(Circuit):
         
         return free_state, voltage_drop_free, delta_conductances, self.conductances
     
-    def iterate_CL(self, n_steps, target_type, eta = 0.001):
+    def iterate_CL(self, n_steps, eta = 0.001):
         ''' Iterate coupled learning for n_steps. '''
         for i in range(n_steps):
             free_state, voltage_drop_free , delta_conductances , conductances = self._step_CL(eta)
@@ -176,7 +191,7 @@ class CL(Circuit):
             return 0.5*np.mean((freeState_DV - self.outputs_target)**2)
 
     
-    def train(self, n_epochs, n_steps_per_epoch, eta = 0.001, verbose = True, pbar = False, log_spaced = False):
+    def train(self, n_epochs, n_steps_per_epoch, eta = 0.001, verbose = True, pbar = False, log_spaced = False, save_state = False, save_path = None):
         ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of coupled learning.
         If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
         '''
@@ -194,6 +209,8 @@ class CL(Circuit):
                     print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
                 self.epoch += 1
                 self.end_epoch.append(self.learning_step)
+                if save_state:
+                    self.save(save_path)
             return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
         else:
             for epoch in epochs:
@@ -203,6 +220,9 @@ class CL(Circuit):
                     print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
                 self.epoch += 1
                 self.end_epoch.append(self.learning_step)
+                if save_state:
+                    # save the state of the circuit after each epoch
+                    self.save(save_path)
             return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
     
     def save(self, path):
