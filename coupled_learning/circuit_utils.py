@@ -52,6 +52,14 @@ class Circuit(object):
             conductances = np.array(conductances)
         self.conductances = conductances
 
+    def _setConductances_as_weights(self):
+        ''' Set the conductances as weights of the edges in the graph. '''
+        nx.set_edge_attributes(self.graph, dict(zip(self.graph.edges, self.conductances)), 'weight')
+
+    def weight_to_conductance(self):
+        ''' Set the conductances as weights of the edges in the graph. '''
+        self.conductances = np.array([self.graph.edges[edge]['weight'] for edge in self.graph.edges])
+
     def _hessian(self):
         ''' Compute the Hessian of the network with respect to the conductances. '''
         return (self.incidence_matrix*self.conductances).dot(self.incidence_matrix.T)
@@ -141,7 +149,83 @@ class Circuit(object):
         return V
 
 
+    '''
+	*****************************************************************************************************
+	*****************************************************************************************************
 
+										CIRCUIT REDUCTION
+
+	*****************************************************************************************************
+	*****************************************************************************************************
+	'''
+
+    def _star_to_mesh_onenode(self, node):
+        ''' Reduces the circuit by using the star-mesh transformation on node.
+
+        Parameters
+        ----------
+        node : int
+            Index of the node to be transformed.
+
+        '''
+        # determine the neighbors of node and the sum of the conductances of the edges between node and its neighbors
+        neighbors = list(self.graph.neighbors(node))
+        sum_conductances = sum([self.graph[node][neighbor]['weight'] for neighbor in neighbors])
+
+        # add the edges between the neighbors of node with new weights (conductances) corresponding to the product of the conductances of the edges between node and its neighbors divided by the sum of the conductances of the edges between node and its neighbors
+        for i in range(len(neighbors)):
+            for j in range(i+1, len(neighbors)):
+                eff_conductance = (self.graph[neighbors[i]][node]['weight'])*(self.graph[neighbors[j]][node]['weight'])/sum_conductances
+                # add the edge if it does not exist
+                if not self.graph.has_edge(neighbors[i], neighbors[j]):
+                    self.graph.add_edge(neighbors[i], neighbors[j], weight = eff_conductance)
+                # otherwise, update the weight (parallel conductances)
+                else:
+                    self.graph[neighbors[i]][neighbors[j]]['weight'] += eff_conductance
+
+        # remove the node from the graph
+        self.graph.remove_node(node)
+
+    def star_to_mesh(self, nodes, all_but_nodes=False):
+        ''' Reduces the circuit by using the star-mesh transformation on all nodes in nodes.
+        
+        Parameters
+        ----------
+        nodes : np.array
+            Array with the indices of the nodes to be transformed.
+        all_but_nodes : bool, optional
+            If True, the star-mesh transformation is applied to all nodes except those in nodes. The default is False.
+        '''
+        # check that nodes is a non-empty array
+        if len(nodes) == 0:
+            raise ValueError('nodes must be a non-empty array.')
+        # check that the nodes exist
+        if not all([node in self.graph.nodes for node in nodes]):
+            raise ValueError('Some of the nodes do not exist.')
+        # check that the nodes are not repeated
+        if len(nodes) != len(set(nodes)):
+            raise ValueError('Some of the nodes are repeated.')
+        # check that the graph will have at least 2 nodes
+        if (len(nodes) >= self.n - 1 and not all_but_nodes) or (len(nodes) < 2 and all_but_nodes):
+            raise ValueError('The graph will have less than 2 nodes.')
+
+        if all_but_nodes:
+            nodes = [node for node in self.graph.nodes() if node not in nodes]
+
+        # apply the star-mesh transformation to all nodes in nodes
+        for node in nodes:
+            self._star_to_mesh_onenode(node)
+
+        self.n = self.graph.number_of_nodes()
+        self.ne = self.graph.number_of_edges()
+        self.pts = np.array([self.graph.nodes[node]['pos'] for node in self.graph.nodes])
+        self.weight_to_conductance()
+            
+        
+
+
+        
+    
 
 
 
