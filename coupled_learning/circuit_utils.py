@@ -155,7 +155,7 @@ class Circuit(object):
 	*****************************************************************************************************
     '''
 
-    def plot_node_state(self, node_state, title = None, lw = 0.5, cmap = 'RdYlBu_r', size_factor = 100, figsize = (4,4)):
+    def plot_node_state(self, node_state, title = None, lw = 0.5, cmap = 'RdYlBu_r', size_factor = 100, figsize = (4,4), filename = None):
         ''' Plot the state of the nodes in the graph.
 
         Parameters
@@ -176,6 +176,8 @@ class Circuit(object):
         fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=axs, shrink=0.5)
         # set the title of each subplot to be the corresponding eigenvalue in scientific notation
         axs.set_title(title)
+        if filename is not None:
+            fig.savefig(filename, dpi = 300, bbox_inches='tight')
 
     def plot_edge_state(self, edge_state, title = None,lw = 0.5, cmap = 'RdYlBu_r', figsize = (4,4)):
         ''' Plot the state of the edges in the graph.
