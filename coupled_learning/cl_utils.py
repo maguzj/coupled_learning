@@ -248,7 +248,7 @@ class CL(Circuit):
 	*****************************************************************************************************
     '''
 
-    def plot_circuit(self, title=None, lw = 0.5, point_size = 100, highlight_nodes = True, figsize = (4,4), highlighted_point_size = 200, filename = None):
+    def plot_circuit(self, title=None, lw = 0.5, point_size = 100, highlight_nodes = False, figsize = (4,4), highlighted_point_size = 200, filename = None):
         ''' Plot the circuit.
         '''
         posX = self.pts[:,0]
