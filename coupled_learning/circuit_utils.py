@@ -263,7 +263,7 @@ class Circuit(object):
         if filename is not None:
             fig.savefig(filename, dpi = 300, bbox_inches='tight')
 
-    def plot_edge_state(self, edge_state, title = None,lw = 0.5, cmap = 'RdYlBu_r', figsize = (4,4)):
+    def plot_edge_state(self, edge_state, title = None,lw = 0.5, cmap = 'RdYlBu_r', figsize = (4,4), minmax = None, filename = None):
         ''' Plot the state of the edges in the graph.
 
         Parameters
@@ -273,10 +273,13 @@ class Circuit(object):
         '''
         _cmap = plt.cm.get_cmap(cmap)
         pos_edges = np.array([np.array([self.graph.nodes[edge[0]]['pos'], self.graph.nodes[edge[1]]['pos']]).T for edge in self.graph.edges()])
-        norm = plt.Normalize(vmin=np.min(edge_state), vmax=np.max(edge_state))
+        if minmax:
+            norm = plt.Normalize(vmin=minmax[0], vmax=minmax[1])
+        else:
+            norm = plt.Normalize(vmin=np.min(edge_state), vmax=np.max(edge_state))
         fig, axs = plt.subplots(1,1, figsize = figsize, constrained_layout=True,sharey=True)
         for i in range(len(pos_edges)):
-            axs.plot(pos_edges[i,0], pos_edges[i,1], color = _cmap(norm(edge_state[i])))
+            axs.plot(pos_edges[i,0], pos_edges[i,1], color = _cmap(norm(edge_state[i])), linewidth = lw)
         axs.set( aspect='equal')
         # remove ticks
         axs.set_xticks([])
@@ -285,5 +288,7 @@ class Circuit(object):
         fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=axs, shrink=0.5)
         # set the title of each subplot to be the corresponding eigenvalue in scientific notation
         axs.set_title(title)
+        if filename:
+            fig.savefig(filename, dpi = 300)
 
  
