@@ -5,6 +5,7 @@ from scipy.sparse import csr_matrix
 from scipy.sparse import bmat
 from scipy.sparse.linalg import spsolve
 import matplotlib.pyplot as plt
+import copy
 
 class Circuit(object):
     ''' Class to simulate a circuit with trainable conductances 
@@ -31,7 +32,7 @@ class Circuit(object):
         if type(graph) == str:
             self.graph = nx.read_gpickle(graph)
         else:
-            self.graph = graph
+            self.graph = copy.deepcopy(graph)
 
         self.n = len(self.graph.nodes)
         self.ne = len(self.graph.edges)
