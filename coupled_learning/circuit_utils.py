@@ -6,6 +6,8 @@ from scipy.sparse import bmat
 from scipy.sparse.linalg import spsolve
 import matplotlib.pyplot as plt
 import copy
+import jax
+import jax.numpy as jnp
 
 class Circuit(object):
     ''' Class to simulate a circuit with trainable conductances 
@@ -28,7 +30,7 @@ class Circuit(object):
         Positions of the nodes in the graph.
     '''
 
-    def __init__(self, graph):
+    def __init__(self, graph, jax=False):
         if type(graph) == str:
             self.graph = nx.read_gpickle(graph)
         else:
@@ -37,8 +39,11 @@ class Circuit(object):
         self.n = len(self.graph.nodes)
         self.ne = len(self.graph.edges)
         self.pts = np.array([self.graph.nodes[node]['pos'] for node in graph.nodes])
-        
+
         self.incidence_matrix = nx.incidence_matrix(self.graph, oriented=True)
+        if jax:
+            self.incidence_matrix = jnp.array(self.incidence_matrix.todense())
+            
 
     # def setPositions(self, positions):
     #     # positions is a list of tuples
@@ -53,6 +58,14 @@ class Circuit(object):
             conductances = np.array(conductances)
         self.conductances = conductances
 
+    def jax_setConductances(self, conductances):
+        # conductances is a list of floats
+        assert len(conductances) == self.ne, 'conductances must have the same length as the number of edges'
+        # if list, convert to numpy array
+        if type(conductances) == list:
+            conductances = jnp.array(conductances)
+        self.conductances = conductances
+
     def _setConductances_as_weights(self):
         ''' Set the conductances as weights of the edges in the graph. '''
         nx.set_edge_attributes(self.graph, dict(zip(self.graph.edges, self.conductances)), 'weight')
@@ -64,6 +77,10 @@ class Circuit(object):
     def _hessian(self):
         ''' Compute the Hessian of the network with respect to the conductances. '''
         return (self.incidence_matrix*self.conductances).dot(self.incidence_matrix.T)
+
+    def _jax_hessian(self):
+        ''' Compute the Hessian of the network with respect to the conductances. '''
+        return jnp.dot(self.incidence_matrix*self.conductances,jnp.transpose(self.incidence_matrix))
     
     def constraint_matrix(self, indices_nodes):
         ''' Compute the constraint matrix Q for the circuit and the nodes represented by indices_nodes. 
@@ -89,6 +106,31 @@ class Circuit(object):
         Q = csr_matrix((np.ones(len(indices_nodes)), (indices_nodes, np.arange(len(indices_nodes)))), shape=(self.n, len(indices_nodes)))
         return Q
     
+    def jax_constraint_matrix(self, indices_nodes):
+        ''' Compute the constraint matrix Q for the circuit and the nodes represented by indices_nodes. 
+        Q is a dense constraint rectangular matrix of size n x len(indices_nodes). Its entries are only 1 or 0.
+        Q.Q^T is a projector onto to the space of the nodes.
+
+        Parameters
+		----------
+		indices_nodes : np.array
+			Array with the indices of the nodes to be constrained. The nodes themselves are given by np.array(self.graph.nodes)[indices_nodes].
+
+		Returns
+		-------
+		Q: 
+			Constraint matrix Q: a dense constraint rectangular matrix of size n x len(indices_nodes). Its entries are only 1 or 0.
+            Q.Q^T is a projector onto to the space of the nodes.
+		
+        '''
+         # Check indicesNodes is a non-empty array
+        if len(indices_nodes) == 0:
+            raise ValueError('indicesNodes must be a non-empty array.')
+        # Create the sparse rectangular constraint matrix Q using csr_matrix. Q has entries 1 at the indicesNodes[i] row and i column.
+        Q = jnp.zeros(shape=(self.n, len(indices_nodes)))
+        Q = Q.at[indices_nodes, jnp.arange(len(indices_nodes))].set(1)
+        return Q
+    
     def _extended_hessian(self, Q):
         ''' Extend the hessian of the network with the constraint matrix Q. 
 
@@ -105,6 +147,26 @@ class Circuit(object):
         '''
         sparseExtendedHessian = bmat([[self._hessian(), Q], [Q.T, None]], format='csr', dtype=float)
         return sparseExtendedHessian
+
+    def _jax_extended_hessian(self, Q):
+        ''' Extend the hessian of the network with the constraint matrix Q. 
+
+        Parameters
+        ----------
+        Q : 
+            Constraint matrix Q
+
+        Returns
+        -------
+        H : 
+            Extended Hessian. H is a dense matrix of size (n + len(indices_nodes)) x (n + len(indices_nodes)).
+        
+        '''
+        extendedHessian = jnp.block([[self._jax_hessian(), Q],[jnp.transpose(Q), jnp.zeros(shape=(jnp.shape(Q)[1],jnp.shape(Q)[1]))]])
+        # bmat([[self._hessian(), Q], [Q.T, None]], format='csr', dtype=float)
+        return extendedHessian
+
+    
 
 
     
@@ -149,6 +211,36 @@ class Circuit(object):
         V = spsolve(H, f_extended)[:self.n]
         return V
 
+    def jax_solve(self, Q, f):
+        ''' Solve the circuit with the constraint matrix Q and the source vector f.
+
+        Parameters
+        ----------
+        Q : jnp.array
+            Constraint matrix Q
+        f : np.array
+            Source vector f. f has size len(indices_nodes).
+
+        Returns
+        -------
+        x : np.array
+            Solution vector V. V has size n.
+        '''
+        # check that the conductances have been set
+        try:
+            self.conductances
+        except AttributeError:
+            raise AttributeError('Conductances have not been set yet.')
+        # check that the source vector has the right size
+        if len(f) != Q.shape[1]:
+            raise ValueError('Source vector f has the wrong size.')
+        # extend the hessian
+        H = self._jax_extended_hessian(Q)
+        # extend f with n zeros
+        f_extended = jnp.hstack([jnp.zeros(self.n), f])
+        # solve the system
+        V = jax.scipy.linalg.solve(H, f_extended)[:self.n]
+        return V
 
     '''
 	*****************************************************************************************************
@@ -240,7 +332,7 @@ class Circuit(object):
 	*****************************************************************************************************
     '''
 
-    def plot_node_state(self, node_state, title = None, lw = 0.5, cmap = 'RdYlBu_r', size_factor = 100, figsize = (4,4), filename = None):
+    def plot_node_state(self, node_state, title = None, lw = 0.5, cmap = 'RdYlBu_r', size_factor = 100, prop = True, figsize = (4,4), filename = None, ax = None):
         ''' Plot the state of the nodes in the graph.
 
         Parameters
@@ -251,18 +343,33 @@ class Circuit(object):
         posX = self.pts[:,0]
         posY = self.pts[:,1]
         norm = plt.Normalize(vmin=np.min(node_state), vmax=np.max(node_state))
-        fig, axs = plt.subplots(1,1, figsize = figsize, constrained_layout=True,sharey=True)
-        axs.scatter(posX, posY, s = size_factor*np.abs(node_state[:]), c = node_state[:],edgecolors = 'black',linewidth = lw,  cmap = cmap, norm = norm)
-        axs.set( aspect='equal')
-        # remove ticks
-        axs.set_xticks([])
-        axs.set_yticks([])
-        # show the colorbar
-        fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=axs, shrink=0.5)
-        # set the title of each subplot to be the corresponding eigenvalue in scientific notation
-        axs.set_title(title)
-        if filename is not None:
-            fig.savefig(filename, dpi = 300, bbox_inches='tight')
+        if prop:
+            size = size_factor*np.abs(node_state[:])
+        else:   
+            size = size_factor
+        if ax is not None:
+            ax.scatter(posX, posY, s = size, c = node_state[:],edgecolors = 'black',linewidth = lw,  cmap = cmap, norm = norm)
+            ax.set( aspect='equal')
+            # remove ticks
+            ax.set_xticks([])
+            ax.set_yticks([])
+            # show the colorbar
+            # ax.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax, shrink=0.5)
+            # set the title of each subplot to be the corresponding eigenvalue in scientific notation
+            ax.set_title(title)
+        else:
+            fig, axs = plt.subplots(1,1, figsize = figsize, constrained_layout=True,sharey=True)
+            axs.scatter(posX, posY, s = size, c = node_state[:],edgecolors = 'black',linewidth = lw,  cmap = cmap, norm = norm)
+            axs.set( aspect='equal')
+            # remove ticks
+            axs.set_xticks([])
+            axs.set_yticks([])
+            # show the colorbar
+            fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=axs, shrink=0.5)
+            # set the title of each subplot to be the corresponding eigenvalue in scientific notation
+            axs.set_title(title)
+            if filename is not None:
+                fig.savefig(filename, dpi = 300, bbox_inches='tight')
 
     def plot_edge_state(self, edge_state, title = None,lw = 0.5, cmap = 'RdYlBu_r', figsize = (4,4), minmax = None, filename = None):
         ''' Plot the state of the edges in the graph.
