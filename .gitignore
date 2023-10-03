@@ -170,3 +170,9 @@ scripts/
 local*
 simulationData/
 *.pkl
+images/
+*.ipynb
+*.npz
+scaling_distance_nodes.py
+parameters.csv
+mathematica/
