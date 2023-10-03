@@ -8,6 +8,7 @@ from scipy.sparse import csr_matrix
 import jax.numpy as jnp
 import jax
 import json
+import csv
 
 class CL(Circuit):
     '''
@@ -276,9 +277,17 @@ class CL(Circuit):
             epochs = tqdm(range(n_epochs))
         else:
             epochs = range(n_epochs)
-        # save attributes
-        if save_path:
-            self.attributes_to_file(save_path+'_attributes.txt')
+        # # save attributes
+        # if save_path:
+        #     self.attributes_to_file(save_path+'_attributes.txt')
+
+        # initial state
+        self.end_epoch.append(self.learning_step)
+        self.losses.append(self.MSE_loss(self.get_free_state()))
+        if save_state:
+            self.save_local(save_path+'.csv')
+
+        #training
         if log_spaced:
             n_steps = n_epochs * n_steps_per_epoch
             n_steps_per_epoch = log_partition(n_steps, n_epochs)
@@ -290,7 +299,11 @@ class CL(Circuit):
                 self.epoch += 1
                 self.end_epoch.append(self.learning_step)
                 if save_state:
-                    self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
+                    # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
+                    self.save_local(save_path+'.csv')
+            # at the end of training, save global and save graph
+            self.save_global(save_path+'_global.json')
+            self.save_graph(save_path+'_graph.json')
             return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
         else:
             for epoch in epochs:
@@ -302,7 +315,11 @@ class CL(Circuit):
                 self.end_epoch.append(self.learning_step)
                 if save_state:
                     # save the state of the circuit after each epoch
-                    self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
+                    # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
+                    self.save_local(save_path+'.csv')
+                        # at the end of training, save global and save graph
+            self.save_global(save_path+'_global.json')
+            self.save_graph(save_path+'_graph.json')
             return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
 
     def train_GD(self, n_epochs, n_steps_per_epoch, verbose = True, pbar = False, log_spaced = False, save_state = False, save_path = None):
@@ -342,10 +359,10 @@ class CL(Circuit):
                     self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
             return self.losses, delta_conductances, conductances
     
-    def save(self, path):
-        ''' Save the circuit. '''
-        with open(path, 'wb') as f:
-            pickle.dump(self, f)
+    # def save(self, path):
+    #     ''' Save the circuit. '''
+    #     with open(path, 'wb') as f:
+    #         pickle.dump(self, f)
 
     def reset_training(self):
         ''' Reset the training. '''
@@ -354,29 +371,29 @@ class CL(Circuit):
         self.end_epoch = []
         self.losses = []
 
-    def attributes_to_file(self, path):
-        ''' Save the attributes of the circuit to a file. '''
-        with open(path, 'w') as f:
-            f.write('n: {}\n'.format(self.n))
-            f.write('ne: {}\n'.format(self.ne))
-            # f.write('graph: {}\n'.format(self.graph))
-            # f.write('pts: {}\n'.format(self.pts))
-            # f.write('conductances: {}\n'.format(self.conductances))
-            f.write('learning_rate: {}\n'.format(self.learning_rate))
-            f.write('learning_step: {}\n'.format(self.learning_step))
-            f.write('epoch: {}\n'.format(self.epoch))
-            f.write('min_k: {}\n'.format(self.min_k))
-            f.write('max_k: {}\n'.format(self.max_k))
-            # f.write('losses: {}\n'.format(self.losses))
-            f.write('end_epoch: {}\n'.format(self.end_epoch))
-            f.write('name: {}\n'.format(self.name))
-            f.write('indices_source: {}\n'.format(self.indices_source))
-            f.write('inputs_source: {}\n'.format(self.inputs_source))
-            f.write('indices_target: {}\n'.format(self.indices_target))
-            f.write('outputs_target: {}\n'.format(self.outputs_target))
-            f.write('target_type: {}\n'.format(self.target_type))
-            # f.write('Q_free: {}\n'.format(self.Q_free))
-            # f.write('Q_clamped: {}\n'.format(self.Q_clamped))
+    # def attributes_to_file(self, path):
+    #     ''' Save the attributes of the circuit to a file. '''
+    #     with open(path, 'w') as f:
+    #         f.write('n: {}\n'.format(self.n))
+    #         f.write('ne: {}\n'.format(self.ne))
+    #         # f.write('graph: {}\n'.format(self.graph))
+    #         # f.write('pts: {}\n'.format(self.pts))
+    #         # f.write('conductances: {}\n'.format(self.conductances))
+    #         f.write('learning_rate: {}\n'.format(self.learning_rate))
+    #         f.write('learning_step: {}\n'.format(self.learning_step))
+    #         f.write('epoch: {}\n'.format(self.epoch))
+    #         f.write('min_k: {}\n'.format(self.min_k))
+    #         f.write('max_k: {}\n'.format(self.max_k))
+    #         # f.write('losses: {}\n'.format(self.losses))
+    #         f.write('end_epoch: {}\n'.format(self.end_epoch))
+    #         f.write('name: {}\n'.format(self.name))
+    #         f.write('indices_source: {}\n'.format(self.indices_source))
+    #         f.write('inputs_source: {}\n'.format(self.inputs_source))
+    #         f.write('indices_target: {}\n'.format(self.indices_target))
+    #         f.write('outputs_target: {}\n'.format(self.outputs_target))
+    #         f.write('target_type: {}\n'.format(self.target_type))
+    #         # f.write('Q_free: {}\n'.format(self.Q_free))
+    #         # f.write('Q_clamped: {}\n'.format(self.Q_clamped))
 
     '''
 	*****************************************************************************************************
@@ -435,20 +452,27 @@ class CL(Circuit):
             f.write('\t"outputs_target": {},\n'.format(self.outputs_target.tolist()))
             f.write('\t"target_type": "{}",\n'.format(self.target_type))
 
-            # f.write('\t"graph": {},\n'.format(self.graph))
-            f.write('\t"pts": {},\n'.format(self.pts.tolist()))
-            # f.write('\t"conductances": {},\n'.format(self.conductances.tolist()))
             f.write('\t"losses": {},\n'.format(self.losses))
-            f.write('\t"end_epoch": {},\n'.format(self.end_epoch))
-            # f.write('\t"Q_free": {},\n'.format(self.Q_free))
-            # f.write('\t"Q_clamped": {}\n'.format(self.Q_clamped))
+            f.write('\t"end_epoch": {}\n'.format(self.end_epoch))
             f.write('}')
 
     def save_local(self, path):
         ''' Save the current conductances in CSV format. '''
         # if the file already exists, append the conductances to the file
-        with open(path, 'a') as f:
-                f.write('{}\n'.format(self.conductances.tolist()))
+        # if os.path.isfile(path):
+        #     with open(path, 'a') as f:
+        #         f.write('{}\n'.format(self.conductances.tolist()))
+        # # if the file does not exist, create it and write the conductances
+        # else:
+        #     with open(path, 'w') as f:
+        #         f.write('{}\n'.format(self.conductances.tolist()))
+        if self.learning_step == 0:
+            save_to_csv(path, self.conductances.tolist(), mode='w')
+        else:
+            save_to_csv(path, self.conductances.tolist())
+
+        
+
 
 
     '''
@@ -519,3 +543,33 @@ def log_partition(N, M):
     while np.sum(intervals) > N:
         intervals[np.argmax(intervals)] -= 1
     return intervals.tolist()
+
+def save_to_csv(filename, data, mode='a'):
+    """
+    Save data to a CSV file.
+    
+    Parameters:
+    - filename: Name of the file to save to.
+    - data: The data to save (should be a list or array).
+    - mode: File mode ('w' for write, 'a' for append). Default is 'a'.
+    """
+    with open(filename, mode, newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(data)
+
+def load_from_csv(filename):
+    """
+    Load data from a CSV file.
+    
+    Parameters:
+    - filename: Name of the file to load from.
+    
+    Returns:
+    - A list of lists containing the data.
+    """
+    data = []
+    with open(filename, 'r') as file:
+        reader = csv.reader(file)
+        for row in reader:
+            data.append([float(item) for item in row])
+    return data
