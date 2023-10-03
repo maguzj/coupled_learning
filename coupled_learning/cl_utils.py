@@ -7,6 +7,7 @@ import pickle
 from scipy.sparse import csr_matrix
 import jax.numpy as jnp
 import jax
+import json
 
 class CL(Circuit):
     '''
@@ -376,6 +377,78 @@ class CL(Circuit):
             f.write('target_type: {}\n'.format(self.target_type))
             # f.write('Q_free: {}\n'.format(self.Q_free))
             # f.write('Q_clamped: {}\n'.format(self.Q_clamped))
+
+    '''
+	*****************************************************************************************************
+	*****************************************************************************************************
+
+										SAVE AND EXPORT
+
+	*****************************************************************************************************
+	*****************************************************************************************************
+    '''
+
+    def save_graph(self, path):
+        ''' Save the graph of the circuit in JSON format '''
+        # first save the nodes ids, and their positions, then save the edges
+        # with open(path, 'w') as f:
+        #     f.write('{\n')
+        #     f.write('\t"nodes": {},\n'.format(list(self.graph.nodes)))
+        #     f.write('\t"pts": {},\n'.format(self.pts.tolist()))
+        #     f.write('\t"edges": {}\n'.format(list(self.graph.edges)))
+        #     f.write('}')
+
+        with open(path, 'w') as f:
+            json.dump({
+                "nodes":list(self.graph.nodes),
+                "pts":self.pts.tolist(),
+                "edges":list(self.graph.edges)},f)
+
+    def read_graph(self,path):
+        ''' Read the graph of the circuit from JSON format '''
+        with open(path, 'r') as f:
+            data = json.load(f)
+        # first read the nodes ids, and their positions, then read the edges
+        self.graph = nx.Graph()
+        self.graph.add_nodes_from(data['nodes'])
+        self.pts = np.array(data['pts'])
+        self.graph.add_edges_from(data['edges'])
+        self.n = self.graph.number_of_nodes()
+        self.ne = self.graph.number_of_edges()
+        self.incidence_matrix = self.get_incidence_matrix()
+
+    def save_global(self, path):
+        ''' Save the attributes of the circuit in JSON format. '''
+        with open(path, 'w') as f:
+            f.write('{\n')
+            f.write('\t"name": "{}",\n'.format(self.name))
+            f.write('\t"n": {},\n'.format(self.n))
+            f.write('\t"ne": {},\n'.format(self.ne))
+            f.write('\t"learning_rate": {},\n'.format(self.learning_rate))
+            f.write('\t"learning_step": {},\n'.format(self.learning_step))
+            f.write('\t"epoch": {},\n'.format(self.epoch))
+            f.write('\t"min_k": {},\n'.format(self.min_k))
+            f.write('\t"max_k": {},\n'.format(self.max_k))
+            f.write('\t"indices_source": {},\n'.format(self.indices_source.tolist()))
+            f.write('\t"inputs_source": {},\n'.format(self.inputs_source.tolist()))
+            f.write('\t"indices_target": {},\n'.format(self.indices_target.tolist()))
+            f.write('\t"outputs_target": {},\n'.format(self.outputs_target.tolist()))
+            f.write('\t"target_type": "{}",\n'.format(self.target_type))
+
+            # f.write('\t"graph": {},\n'.format(self.graph))
+            f.write('\t"pts": {},\n'.format(self.pts.tolist()))
+            # f.write('\t"conductances": {},\n'.format(self.conductances.tolist()))
+            f.write('\t"losses": {},\n'.format(self.losses))
+            f.write('\t"end_epoch": {},\n'.format(self.end_epoch))
+            # f.write('\t"Q_free": {},\n'.format(self.Q_free))
+            # f.write('\t"Q_clamped": {}\n'.format(self.Q_clamped))
+            f.write('}')
+
+    def save_local(self, path):
+        ''' Save the current conductances in CSV format. '''
+        # if the file already exists, append the conductances to the file
+        with open(path, 'a') as f:
+                f.write('{}\n'.format(self.conductances.tolist()))
 
 
     '''
