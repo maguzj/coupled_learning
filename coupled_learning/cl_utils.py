@@ -1,6 +1,7 @@
 import numpy as np
 # from .circuit_utils import Circuit
 from circuit_utils import Circuit
+from network_utils import *
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import pickle
@@ -25,7 +26,7 @@ class CL(Circuit):
     pts : np.array
         Positions of the nodes.
     '''
-    def __init__(self, graph, conductances, learning_rate=1.0, learning_step = 0, min_k = 1.e-6, max_k = 1.e6, name = 'CL', jax = False):
+    def __init__(self, graph, conductances, learning_rate=1.0, learning_step = 0, min_k = 1.e-6, max_k = 1.e6, name = 'CL', jax = False, losses = None, end_epoch = None):
         ''' Initialize the coupled learning circuit.
 
         Parameters
@@ -36,14 +37,23 @@ class CL(Circuit):
             Conductances of the edges of the circuit.
         '''
         super().__init__(graph, jax=jax)
+        self.jax = jax
         self.setConductances(conductances)
         self.learning_rate = learning_rate
         self.learning_step = learning_step
-        self.epoch = 0
+        
         self.min_k = min_k
         self.max_k = max_k
-        self.losses = []
-        self.end_epoch = []
+        if losses is None:
+            self.losses = []
+        else:
+            self.losses = losses
+        if end_epoch is None:
+            self.end_epoch = []
+            self.epoch = 0
+        else:
+            self.epoch = end_epoch[-1]
+            self.end_epoch = end_epoch
         self.name = name
     
     def set_name(self, name):
@@ -171,7 +181,7 @@ class CL(Circuit):
         # Compute the constraint matrices
         self.Q_free = self.jax_constraint_matrix(self.indices_source)
         if self.target_type == 'node':
-            self.Q_clamped = self.jax_constraint_matrix(np.concatenate((self.indices_source, self.indices_target)))    
+            self.Q_clamped = self.jax_constraint_matrix(jnp.concatenate((self.indices_source, self.indices_target)))    
         elif self.target_type == 'edge':
             # constraintClamped = np.zeros((self.n, self.indices_source.shape[0] + self.indices_target.shape[0]))
             # constraintClamped[self.indices_source, np.arange(self.indices_source.shape[0])] = 1
@@ -230,12 +240,12 @@ class CL(Circuit):
 
     def _step_GD(self):
         ''' Perform a step of gradient descent over the MSE. '''
-        delta_conductances = -jax.grad(self.jax_MSE_loss)(self.conductances)
-        self.conductances = self.conductances + self.learning_rate*delta_conductances
+        # delta_conductances = -jax.grad(self.jax_MSE_loss)(self.conductances)
+        self.conductances = self.conductances - self.learning_rate*jax.grad(self.jax_MSE_loss)(self.conductances)
         self.conductances = jnp.clip(self.conductances, self.min_k, self.max_k)
         self.learning_step += 1
 
-        return delta_conductances, self.conductances
+        return self.conductances
         
 
     def iterate_CL(self, n_steps, eta = 0.001):
@@ -247,8 +257,8 @@ class CL(Circuit):
     def iterate_GD(self, n_steps):
         ''' Iterate gradient descent for n_steps. '''
         for i in range(n_steps):
-            delta_conductances, conductances = self._step_GD()
-        return delta_conductances, conductances
+            conductances = self._step_GD()
+        return conductances
     
     def MSE_loss(self, free_state):
         ''' Compute the MSE loss. '''
@@ -282,10 +292,11 @@ class CL(Circuit):
         #     self.attributes_to_file(save_path+'_attributes.txt')
 
         # initial state
-        self.end_epoch.append(self.learning_step)
-        self.losses.append(self.MSE_loss(self.get_free_state()))
-        if save_state:
-            self.save_local(save_path+'.csv')
+        if self.learning_step == 0:
+            self.end_epoch.append(self.learning_step)
+            self.losses.append(self.MSE_loss(self.get_free_state()))
+            if save_state:
+                self.save_local(save_path+'.csv')
 
         #training
         if log_spaced:
@@ -317,7 +328,7 @@ class CL(Circuit):
                     # save the state of the circuit after each epoch
                     # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
                     self.save_local(save_path+'.csv')
-                        # at the end of training, save global and save graph
+            # at the end of training, save global and save graph
             self.save_global(save_path+'_global.json')
             self.save_graph(save_path+'_graph.json')
             return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
@@ -331,33 +342,51 @@ class CL(Circuit):
         else:
             epochs = range(n_epochs)
         # save attributes
-        if save_path:
-            self.attributes_to_file(save_path+'_attributes.txt')
+        # if save_path:
+        #     self.attributes_to_file(save_path+'_attributes.txt')
+
+        # initial state
+        if self.learning_step == 0:
+            self.end_epoch.append(self.learning_step)
+            self.losses.append(float(self.jax_MSE_loss(self.conductances)))
+            if save_state:
+                self.save_local(save_path+'.csv')
+
+        #training
+
         if log_spaced:
             n_steps = n_epochs * n_steps_per_epoch
             n_steps_per_epoch = log_partition(n_steps, n_epochs)
             for epoch in epochs:
-                delta_conductances, conductances = self.iterate_GD(n_steps_per_epoch[epoch])
-                self.losses.append(self.jax_MSE_loss(conductances))
+                conductances = self.iterate_GD(n_steps_per_epoch[epoch])
+                self.losses.append(float(self.jax_MSE_loss(conductances)))
                 if verbose:
                     print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
                 self.epoch += 1
                 self.end_epoch.append(self.learning_step)
                 if save_state:
-                    self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
-            return self.losses, delta_conductances, conductances
+                    # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
+                    self.save_local(save_path+'.csv')
+            # at the end of training, save global and save graph
+            self.save_global(save_path+'_global.json')
+            self.save_graph(save_path+'_graph.json')
+            return self.losses, conductances
         else:
             for epoch in epochs:
-                delta_conductances, conductances = self.iterate_GD(n_steps_per_epoch)
-                self.losses.append(self.jax_MSE_loss(conductances))
+                conductances = self.iterate_GD(n_steps_per_epoch)
+                self.losses.append(float(self.jax_MSE_loss(conductances)))
                 if verbose:
                     print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
                 self.epoch += 1
                 self.end_epoch.append(self.learning_step)
                 if save_state:
                     # save the state of the circuit after each epoch
-                    self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
-            return self.losses, delta_conductances, conductances
+                    # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
+                    self.save_local(save_path+'.csv')
+            # at the end of training, save global and save graph
+            self.save_global(save_path+'_global.json')
+            self.save_graph(save_path+'_graph.json')
+            return self.losses, conductances
     
     # def save(self, path):
     #     ''' Save the circuit. '''
@@ -436,25 +465,49 @@ class CL(Circuit):
 
     def save_global(self, path):
         ''' Save the attributes of the circuit in JSON format. '''
+        # create a dictionary with the attributes
+        dic = {
+            "name": self.name,
+            "n": self.n,
+            "ne": self.ne,
+            "learning_rate": self.learning_rate,
+            "learning_step": self.learning_step,
+            "epoch": self.epoch,
+            "jax": self.jax,
+            "min_k": self.min_k,
+            "max_k": self.max_k,
+            "indices_source": self.indices_source.tolist(),
+            "inputs_source": self.inputs_source.tolist(),
+            "indices_target": self.indices_target.tolist(),
+            "outputs_target": self.outputs_target.tolist(),
+            "target_type": self.target_type,
+            "losses": self.losses,
+            "end_epoch": self.end_epoch
+        }
+        # save the dictionary in JSON format
         with open(path, 'w') as f:
-            f.write('{\n')
-            f.write('\t"name": "{}",\n'.format(self.name))
-            f.write('\t"n": {},\n'.format(self.n))
-            f.write('\t"ne": {},\n'.format(self.ne))
-            f.write('\t"learning_rate": {},\n'.format(self.learning_rate))
-            f.write('\t"learning_step": {},\n'.format(self.learning_step))
-            f.write('\t"epoch": {},\n'.format(self.epoch))
-            f.write('\t"min_k": {},\n'.format(self.min_k))
-            f.write('\t"max_k": {},\n'.format(self.max_k))
-            f.write('\t"indices_source": {},\n'.format(self.indices_source.tolist()))
-            f.write('\t"inputs_source": {},\n'.format(self.inputs_source.tolist()))
-            f.write('\t"indices_target": {},\n'.format(self.indices_target.tolist()))
-            f.write('\t"outputs_target": {},\n'.format(self.outputs_target.tolist()))
-            f.write('\t"target_type": "{}",\n'.format(self.target_type))
+            json.dump(dic, f)
 
-            f.write('\t"losses": {},\n'.format(self.losses))
-            f.write('\t"end_epoch": {}\n'.format(self.end_epoch))
-            f.write('}')
+        # with open(path, 'w') as f:
+        #     f.write('{\n')
+        #     f.write('\t"name": "{}",\n'.format(self.name))
+        #     f.write('\t"n": {},\n'.format(self.n))
+        #     f.write('\t"ne": {},\n'.format(self.ne))
+        #     f.write('\t"learning_rate": {},\n'.format(self.learning_rate))
+        #     f.write('\t"learning_step": {},\n'.format(self.learning_step))
+        #     f.write('\t"epoch": {},\n'.format(self.epoch))
+        #     # f.write('\t"jax": {},\n'.format(str(self.jax)))
+        #     f.write('\t"min_k": {},\n'.format(self.min_k))
+        #     f.write('\t"max_k": {},\n'.format(self.max_k))
+        #     f.write('\t"indices_source": {},\n'.format(self.indices_source.tolist()))
+        #     f.write('\t"inputs_source": {},\n'.format(self.inputs_source.tolist()))
+        #     f.write('\t"indices_target": {},\n'.format(self.indices_target.tolist()))
+        #     f.write('\t"outputs_target": {},\n'.format(self.outputs_target.tolist()))
+        #     f.write('\t"target_type": "{}",\n'.format(self.target_type))
+
+        #     f.write('\t"losses": {},\n'.format(self.losses))
+        #     f.write('\t"end_epoch": {}\n'.format(self.end_epoch))
+        #     f.write('}')
 
     def save_local(self, path):
         ''' Save the current conductances in CSV format. '''
@@ -573,3 +626,46 @@ def load_from_csv(filename):
         for row in reader:
             data.append([float(item) for item in row])
     return data
+
+
+def CL_from_file(jsonfile_global, jsonfile_graph, csv_local=None):
+    # create a CL object from a json file
+    with open(jsonfile_global, 'r') as f:
+        data_global = json.load(f)
+    with open(jsonfile_graph, 'r') as f:
+        data_graph = json.load(f)
+    if csv_local:
+        conductances = load_from_csv(csv_local)[-1]
+    
+    # extract the attributes
+    graph = network_from_json(jsonfile_graph)
+    learning_rate = data_global['learning_rate']
+    learning_step = data_global['learning_step']
+    min_k = data_global['min_k']
+    max_k = data_global['max_k']
+    name = data_global['name']
+    jax = data_global['jax']
+    losses = data_global['losses']
+    end_epoch = data_global['end_epoch']
+
+    # extract the task
+    indices_source = data_global['indices_source']
+    inputs_source = data_global['inputs_source']
+    indices_target = data_global['indices_target']
+    outputs_target = data_global['outputs_target']
+    target_type = data_global['target_type']
+
+    if jax:
+        conductances = jnp.array(conductances)
+        indices_source = jnp.array(indices_source)
+        inputs_source = jnp.array(inputs_source)
+        indices_target = jnp.array(indices_target)
+        outputs_target = jnp.array(outputs_target)
+
+    allo = CL(graph, conductances, learning_rate, learning_step, min_k, max_k, name, jax, losses, end_epoch)
+    if jax:
+        allo.jax_set_task(indices_source, inputs_source, indices_target, outputs_target, target_type)
+    else:
+        allo.set_task(indices_source, inputs_source, indices_target, outputs_target, target_type)   
+
+    return allo
