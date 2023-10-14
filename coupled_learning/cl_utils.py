@@ -187,6 +187,8 @@ class CL(Circuit):
         if self.target_type == 'node':
             self.Q_clamped = self.jax_constraint_matrix(jnp.concatenate((self.indices_source, self.indices_target)))    
         elif self.target_type == 'edge':
+            q_edge = self.jax_constraint_matrix(indices_target, restrictionType='edge')
+            self.Q_clamped = jnp.concatenate([self.Q_free,q_edge], axis=1)
             # constraintClamped = np.zeros((self.n, self.indices_source.shape[0] + self.indices_target.shape[0]))
             # constraintClamped[self.indices_source, np.arange(self.indices_source.shape[0])] = 1
             # constraintClamped[self.indices_target[:,1], self.indices_source.shape[0]+ np.arange(self.indices_target.shape[0])] = 1
@@ -194,7 +196,7 @@ class CL(Circuit):
             # clampedStateConstraintMatrix = csr_matrix(constraintClamped)
             # self.Q_clamped = clampedStateConstraintMatrix
             # Throw exception
-            raise Exception('jax_set_task not implemented for edge target type')
+            # raise Exception('jax_set_task not implemented for edge target type')
 
         return self.Q_free, self.Q_clamped
     
@@ -281,7 +283,8 @@ class CL(Circuit):
         if self.target_type == 'node':
             return 0.5*jnp.mean((free_state[self.indices_target] - self.outputs_target)**2)
         elif self.target_type == 'edge':
-            freeState_DV = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
+            # freeState_DV = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
+            freeState_DV = free_state[self.indices_target[:,0]] - free_state[self.indices_target[:,1]]
             return 0.5*jnp.mean((freeState_DV - self.outputs_target)**2)
 
     

@@ -413,7 +413,7 @@ class Circuit(object):
             if filename is not None:
                 fig.savefig(filename, dpi = 300, bbox_inches='tight')
 
-    def plot_edge_state(self, edge_state, title = None,lw = 0.5, cmap = 'RdYlBu_r', figsize = (4,4), minmax = None, filename = None):
+    def plot_edge_state(self, edge_state, title = None,lw = 0.5, cmap = 'YlOrBr', figsize = (4,4), minmax = None, filename = None, background_color = '0.75'):
         ''' Plot the state of the edges in the graph.
 
         Parameters
@@ -436,6 +436,11 @@ class Circuit(object):
         axs.set_yticks([])
         # show the colorbar
         fig.colorbar(plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=axs, shrink=0.5)
+        axs.set_facecolor(background_color)
+        fig.set_facecolor(background_color)
+        # remove frame
+        for spine in axs.spines.values():
+            spine.set_visible(False)
         # set the title of each subplot to be the corresponding eigenvalue in scientific notation
         axs.set_title(title)
         if filename:
