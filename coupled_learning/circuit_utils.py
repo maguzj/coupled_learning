@@ -356,7 +356,16 @@ class Circuit(object):
         self.pts = np.array([self.graph.nodes[node]['pos'] for node in self.graph.nodes])
         self.weight_to_conductance()
             
-        
+    def _remove_edge(self, edge):
+        ''' Remove the edge from the graph. '''
+        # determine the index of the edge in the list of edges
+        index_edge = list(self.graph.edges).index(tuple(edge))
+        self.graph.remove_edge(*edge)
+        self.n = self.graph.number_of_nodes()
+        self.ne = self.graph.number_of_edges()
+        self.pts = np.array([self.graph.nodes[node]['pos'] for node in self.graph.nodes])
+        # remove the corresponding conductance
+        self.conductances = np.delete(self.conductances, index_edge)
 
 
         

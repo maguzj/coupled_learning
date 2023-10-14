@@ -12,13 +12,15 @@ def grid_network(m, n, periodic=False, size_uc = (1,1), relabel_nodes=True):
 
     return graph
 
-def jammed_network(n, seed=0):
+def jammed_network(n, seed=0, relabel_nodes=True):
     net = Packing(n, rfac=0.8, seed=seed, dim=2)
     # net.params['contact'] = 0.2 # reduce the default contact repulsion
     net.generate()
     graph = net.graph
     for node in graph.nodes:
         graph.nodes[node]['pos'] = graph.nodes[node]['pos'][:2]/net.radius
+    if relabel_nodes:
+        graph = nx.convert_node_labels_to_integers(graph)
     
     return graph
 
