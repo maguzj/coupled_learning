@@ -82,7 +82,7 @@ class Circuit(object):
         ''' Compute the Hessian of the network with respect to the conductances. '''
         return jnp.dot(self.incidence_matrix*self.conductances,jnp.transpose(self.incidence_matrix))
     
-    def constraint_matrix(self, indices_nodes):
+    def constraint_matrix(self, indices_nodes, restrictionType = 'node'):
         ''' Compute the constraint matrix Q for the circuit and the nodes represented by indices_nodes. 
         Q is a sparse constraint rectangular matrix of size n x len(indices_nodes). Its entries are only 1 or 0.
         Q.Q^T is a projector onto to the space of the nodes.
@@ -90,7 +90,11 @@ class Circuit(object):
         Parameters
 		----------
 		indices_nodes : np.array
-			Array with the indices of the nodes to be constrained. The nodes themselves are given by np.array(self.graph.nodes)[indices_nodes].
+            if restrictionType == 'node':
+    			Array with the indices of the nodes to be constrained. The nodes themselves are given by np.array(self.graph.nodes)[indices_nodes].
+            if restrictionType == 'edge':
+                Array with the pairs of indices of the nodes to be constrained. The order of the elements signal the direction of the flow constraint,
+                from the first to the second.
 
 		Returns
 		-------
@@ -103,10 +107,21 @@ class Circuit(object):
         if len(indices_nodes) == 0:
             raise ValueError('indicesNodes must be a non-empty array.')
         # Create the sparse rectangular constraint matrix Q using csr_matrix. Q has entries 1 at the indicesNodes[i] row and i column.
-        Q = csr_matrix((np.ones(len(indices_nodes)), (indices_nodes, np.arange(len(indices_nodes)))), shape=(self.n, len(indices_nodes)))
+        if restrictionType == 'node':
+            # check that indices_nodes has a valid shape (integer,)
+            if len(indices_nodes.shape) != 1:
+                raise ValueError('indices_nodes must be a 1D array.')
+            Q = csr_matrix((np.ones(len(indices_nodes)), (indices_nodes, np.arange(len(indices_nodes)))), shape=(self.n, len(indices_nodes)))
+        elif restrictionType == 'edge':
+            # check that indices_nodes has a valid shape (integer, 2)
+            if len(indices_nodes.shape) != 2 or indices_nodes.shape[1] != 2:
+                raise ValueError('indices_nodes must be a 2D array with shape (integer, 2).')
+            Q = csr_matrix((np.ones(len(indices_nodes)), (indices_nodes[:,0], np.arange(len(indices_nodes)))), shape=(self.n, len(indices_nodes))) + csr_matrix((-np.ones(len(indices_nodes)), (indices_nodes[:,1], np.arange(len(indices_nodes)))), shape=(self.n, len(indices_nodes)))
+        else:
+            raise ValueError('restrictionType must be either "node" or "edge".')
         return Q
     
-    def jax_constraint_matrix(self, indices_nodes):
+    def jax_constraint_matrix(self, indices_nodes, restrictionType = 'node'):
         ''' Compute the constraint matrix Q for the circuit and the nodes represented by indices_nodes. 
         Q is a dense constraint rectangular matrix of size n x len(indices_nodes). Its entries are only 1 or 0.
         Q.Q^T is a projector onto to the space of the nodes.

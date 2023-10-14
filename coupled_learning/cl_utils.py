@@ -11,6 +11,8 @@ import jax
 import json
 import csv
 
+from scipy.sparse import hstack
+
 class CL(Circuit):
     '''
     Class for coupled learning in linear circuits.
@@ -143,12 +145,14 @@ class CL(Circuit):
         if self.target_type == 'node':
             self.Q_clamped = self.constraint_matrix(np.concatenate((self.indices_source, self.indices_target)))    
         elif self.target_type == 'edge':
-            constraintClamped = np.zeros((self.n, self.indices_source.shape[0] + self.indices_target.shape[0]))
-            constraintClamped[self.indices_source, np.arange(self.indices_source.shape[0])] = 1
-            constraintClamped[self.indices_target[:,1], self.indices_source.shape[0]+ np.arange(self.indices_target.shape[0])] = 1
-            constraintClamped[self.indices_target[:,2], self.indices_source.shape[0]+ np.arange(self.indices_target.shape[0])] = -1
-            clampedStateConstraintMatrix = csr_matrix(constraintClamped)
-            self.Q_clamped = clampedStateConstraintMatrix
+            q_edge = self.constraint_matrix(indices_target, restrictionType='edge')
+            self.Q_clamped = hstack([self.Q_free, q_edge])
+            # constraintClamped = np.zeros((self.n, self.indices_source.shape[0] + self.indices_target.shape[0]))
+            # constraintClamped[self.indices_source, np.arange(self.indices_source.shape[0])] = 1
+            # constraintClamped[self.indices_target[:,1], self.indices_source.shape[0]+ np.arange(self.indices_target.shape[0])] = 1
+            # constraintClamped[self.indices_target[:,2], self.indices_source.shape[0]+ np.arange(self.indices_target.shape[0])] = -1
+            # clampedStateConstraintMatrix = csr_matrix(constraintClamped)
+            # self.Q_clamped = clampedStateConstraintMatrix
 
         return self.Q_free, self.Q_clamped
 
@@ -220,7 +224,8 @@ class CL(Circuit):
 
         elif self.target_type == 'edge':
 
-            DP = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
+            # DP = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
+            DP = free_state[self.indices_target[:,0]] - free_state[self.indices_target[:,1]]
             nudge = DP + eta * (self.outputs_target - DP)
 
         clamped_state = self.solve(self.Q_clamped, np.concatenate((self.inputs_source, nudge)))
@@ -265,7 +270,8 @@ class CL(Circuit):
         if self.target_type == 'node':
             return 0.5*np.mean((free_state[self.indices_target] - self.outputs_target)**2)
         elif self.target_type == 'edge':
-            freeState_DV = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
+            # freeState_DV = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
+            freeState_DV = free_state[self.indices_target[:,0]] - free_state[self.indices_target[:,1]]
             return 0.5*np.mean((freeState_DV - self.outputs_target)**2)
 
     def jax_MSE_loss(self, conductances):
@@ -279,7 +285,7 @@ class CL(Circuit):
             return 0.5*jnp.mean((freeState_DV - self.outputs_target)**2)
 
     
-    def train(self, n_epochs, n_steps_per_epoch, eta = 0.001, verbose = True, pbar = False, log_spaced = False, save_state = False, save_path = None):
+    def train(self, n_epochs, n_steps_per_epoch, eta = 0.001, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = None):
         ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of coupled learning.
         If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
         '''
@@ -313,8 +319,9 @@ class CL(Circuit):
                     # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
                     self.save_local(save_path+'.csv')
             # at the end of training, save global and save graph
-            self.save_global(save_path+'_global.json')
-            self.save_graph(save_path+'_graph.json')
+            if save_global:
+                self.save_global(save_path+'_global.json')
+                self.save_graph(save_path+'_graph.json')
             return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
         else:
             for epoch in epochs:
@@ -329,8 +336,9 @@ class CL(Circuit):
                     # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
                     self.save_local(save_path+'.csv')
             # at the end of training, save global and save graph
-            self.save_global(save_path+'_global.json')
-            self.save_graph(save_path+'_graph.json')
+            if save_global:
+                self.save_global(save_path+'_global.json')
+                self.save_graph(save_path+'_graph.json')
             return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
 
     def train_GD(self, n_epochs, n_steps_per_epoch, verbose = True, pbar = False, log_spaced = False, save_state = False, save_path = None):
@@ -368,8 +376,9 @@ class CL(Circuit):
                     # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
                     self.save_local(save_path+'.csv')
             # at the end of training, save global and save graph
-            self.save_global(save_path+'_global.json')
-            self.save_graph(save_path+'_graph.json')
+            if save_global:
+                self.save_global(save_path+'_global.json')
+                self.save_graph(save_path+'_graph.json')
             return self.losses, conductances
         else:
             for epoch in epochs:
@@ -384,8 +393,9 @@ class CL(Circuit):
                     # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
                     self.save_local(save_path+'.csv')
             # at the end of training, save global and save graph
-            self.save_global(save_path+'_global.json')
-            self.save_graph(save_path+'_graph.json')
+            if save_global:
+                self.save_global(save_path+'_global.json')
+                self.save_graph(save_path+'_graph.json')
             return self.losses, conductances
     
     # def save(self, path):
@@ -549,11 +559,18 @@ class CL(Circuit):
             axs.plot(pos_edges[i,0], pos_edges[i,1], c = 'black', lw = lw, zorder = 1)
         axs.scatter(posX, posY, s = point_size, c = 'black', zorder = 2)
         if highlight_nodes:
+            # sources in red
             axs.scatter(posX[self.indices_source], posY[self.indices_source], s = highlighted_point_size, c = 'red', zorder = 10)
-            try:
-                axs.scatter(posX[self.indices_target[:,1:]], posY[self.indices_target[:,1:]], s = highlighted_point_size, c = 'blue', zorder = 10)
-            except:
+            # targets in blue. Check the type of target
+            if self.target_type == 'node':
                 axs.scatter(posX[self.indices_target], posY[self.indices_target], s = highlighted_point_size, c = 'blue', zorder = 10)
+            elif self.target_type == 'edge':
+                axs.scatter(posX[self.indices_target[:,0]], posY[self.indices_target[:,0]], s = highlighted_point_size, c = 'blue', zorder = 10)
+                axs.scatter(posX[self.indices_target[:,1]], posY[self.indices_target[:,1]], s = 0.5*highlighted_point_size, c = 'blue', zorder = 10)
+            # try:
+            #     axs.scatter(posX[self.indices_target[:,1:]], posY[self.indices_target[:,1:]], s = highlighted_point_size, c = 'blue', zorder = 10)
+            # except:
+            #     axs.scatter(posX[self.indices_target], posY[self.indices_target], s = highlighted_point_size, c = 'blue', zorder = 10)
         axs.set( aspect='equal')
         # remove ticks
         axs.set_xticks([])
