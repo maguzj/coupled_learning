@@ -341,7 +341,7 @@ class CL(Circuit):
                 self.save_graph(save_path+'_graph.json')
             return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
 
-    def train_GD(self, n_epochs, n_steps_per_epoch, verbose = True, pbar = False, log_spaced = False, save_state = False, save_path = None):
+    def train_GD(self, n_epochs, n_steps_per_epoch, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = None):
         ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of gradient descent.
         If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
         '''
@@ -666,11 +666,11 @@ def CL_from_file(jsonfile_global, jsonfile_graph, csv_local=None):
     end_epoch = data_global['end_epoch']
 
     # extract the task
-    indices_source = data_global['indices_source']
-    inputs_source = data_global['inputs_source']
-    indices_target = data_global['indices_target']
-    outputs_target = data_global['outputs_target']
-    target_type = data_global['target_type']
+    indices_source = np.array(data_global['indices_source'])
+    inputs_source = np.array(data_global['inputs_source'])
+    indices_target = np.array(data_global['indices_target'])
+    outputs_target = np.array(data_global['outputs_target'])
+    target_type = np.array(data_global['target_type'])
 
     if jax:
         conductances = jnp.array(conductances)

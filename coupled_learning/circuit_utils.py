@@ -99,23 +99,24 @@ class Circuit(object):
 		Returns
 		-------
 		Q: scipy.sparse.csr_matrix
-			Constraint matrix Q: a sparse constraint rectangular matrix of size n x len(indices_nodes). Its entries are only 1 or 0.
+			Constraint matrix Q: a sparse constraint rectangular matrix of size n x len(indices_nodes). Its entries are only 1, -1, or 0.
             Q.Q^T is a projector onto to the space of the nodes.
 		
         '''
-         # Check indicesNodes is a non-empty array
+        # Check indicesNodes is a non-empty array
         if len(indices_nodes) == 0:
             raise ValueError('indicesNodes must be a non-empty array.')
-        # Create the sparse rectangular constraint matrix Q using csr_matrix. Q has entries 1 at the indicesNodes[i] row and i column.
         if restrictionType == 'node':
             # check that indices_nodes has a valid shape (integer,)
             if len(indices_nodes.shape) != 1:
                 raise ValueError('indices_nodes must be a 1D array.')
+            # Create the sparse rectangular constraint matrix Q. Q has entries 1 at the indicesNodes[i] row and i column.
             Q = csr_matrix((np.ones(len(indices_nodes)), (indices_nodes, np.arange(len(indices_nodes)))), shape=(self.n, len(indices_nodes)))
         elif restrictionType == 'edge':
             # check that indices_nodes has a valid shape (integer, 2)
             if len(indices_nodes.shape) != 2 or indices_nodes.shape[1] != 2:
                 raise ValueError('indices_nodes must be a 2D array with shape (integer, 2).')
+            # Create the sparse rectangular constraint matrix Q. Q has entries 1 at the indicesNodes[i,0] row and i column, and -1 at the indicesNodes[i,1] row and i column.
             Q = csr_matrix((np.ones(len(indices_nodes)), (indices_nodes[:,0], np.arange(len(indices_nodes)))), shape=(self.n, len(indices_nodes))) + csr_matrix((-np.ones(len(indices_nodes)), (indices_nodes[:,1], np.arange(len(indices_nodes)))), shape=(self.n, len(indices_nodes)))
         else:
             raise ValueError('restrictionType must be either "node" or "edge".')
@@ -129,21 +130,47 @@ class Circuit(object):
         Parameters
 		----------
 		indices_nodes : np.array
-			Array with the indices of the nodes to be constrained. The nodes themselves are given by np.array(self.graph.nodes)[indices_nodes].
-
+            if restrictionType == 'node':
+    			Array with the indices of the nodes to be constrained. The nodes themselves are given by np.array(self.graph.nodes)[indices_nodes].
+            if restrictionType == 'edge':
+                Array with the pairs of indices of the nodes to be constrained. The order of the elements signal the direction of the flow constraint,
+                from the first to the second.
 		Returns
 		-------
 		Q: 
-			Constraint matrix Q: a dense constraint rectangular matrix of size n x len(indices_nodes). Its entries are only 1 or 0.
+			Constraint matrix Q: a dense constraint rectangular matrix of size n x len(indices_nodes). Its entries are only 1, -1, or 0.
             Q.Q^T is a projector onto to the space of the nodes.
 		
         '''
-         # Check indicesNodes is a non-empty array
+        # # Check indicesNodes is a non-empty array
+        # if len(indices_nodes) == 0:
+        #     raise ValueError('indicesNodes must be a non-empty array.')
+        # # Create the sparse rectangular constraint matrix Q. Q has entries 1 at the indicesNodes[i] row and i column.
+        # Q = jnp.zeros(shape=(self.n, len(indices_nodes)))
+        # Q = Q.at[indices_nodes, jnp.arange(len(indices_nodes))].set(1)
+        # return Q
+
+
+        # Check indicesNodes is a non-empty array
         if len(indices_nodes) == 0:
             raise ValueError('indicesNodes must be a non-empty array.')
-        # Create the sparse rectangular constraint matrix Q using csr_matrix. Q has entries 1 at the indicesNodes[i] row and i column.
-        Q = jnp.zeros(shape=(self.n, len(indices_nodes)))
-        Q = Q.at[indices_nodes, jnp.arange(len(indices_nodes))].set(1)
+        if restrictionType == 'node':
+            # check that indices_nodes has a valid shape (integer,)
+            if len(indices_nodes.shape) != 1:
+                raise ValueError('indices_nodes must be a 1D array.')
+            # Create the sparse rectangular constraint matrix Q. Q has entries 1 at the indicesNodes[i] row and i column.
+            Q = jnp.zeros(shape=(self.n, len(indices_nodes)))
+            Q = Q.at[indices_nodes, jnp.arange(len(indices_nodes))].set(1)
+        elif restrictionType == 'edge':
+            # check that indices_nodes has a valid shape (integer, 2)
+            if len(indices_nodes.shape) != 2 or indices_nodes.shape[1] != 2:
+                raise ValueError('indices_nodes must be a 2D array with shape (integer, 2).')
+            # Create the sparse rectangular constraint matrix Q. Q has entries 1 at the indicesNodes[i,0] row and i column, and -1 at the indicesNodes[i,1] row and i column.
+            Q = jnp.zeros(shape=(self.n, len(indices_nodes)))
+            Q = Q.at[indices_nodes[:,0], jnp.arange(len(indices_nodes))].set(1)
+            Q = Q.at[indices_nodes[:,1], jnp.arange(len(indices_nodes))].set(-1)
+        else:
+            raise ValueError('restrictionType must be either "node" or "edge".')
         return Q
     
     def _extended_hessian(self, Q):
