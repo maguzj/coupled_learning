@@ -172,6 +172,7 @@ simulationData/
 *.pkl
 images/
 *.ipynb
+!coupled_learning/example-training.ipynb
 *.npz
 scaling_distance_nodes.py
 parameters.csv
