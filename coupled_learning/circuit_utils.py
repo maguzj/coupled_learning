@@ -363,9 +363,6 @@ class Circuit(object):
         index_edge = list(self.graph.edges).index(tuple(edge))
         self.graph.remove_edge(*edge)
 
-        # if len(list(nx.isolates(self.graph)))>0:
-            # old_node_labels = 
-
         self.graph.remove_nodes_from(list(nx.isolates(self.graph)))
 
         self.n = self.graph.number_of_nodes()
