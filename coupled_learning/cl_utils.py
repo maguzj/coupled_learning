@@ -154,9 +154,6 @@ class CL(Circuit):
             # clampedStateConstraintMatrix = csr_matrix(constraintClamped)
             # self.Q_clamped = clampedStateConstraintMatrix
 
-        print(self.Q_free.shape)
-        print(self.indices_source, self.indices_target)
-
         return self.Q_free, self.Q_clamped
 
     def jax_set_task(self, indices_source, inputs_source, indices_target, outputs_target, target_type='node'):
