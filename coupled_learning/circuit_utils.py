@@ -357,22 +357,32 @@ class Circuit(object):
         self.pts = np.array([self.graph.nodes[node]['pos'] for node in self.graph.nodes])
         self.weight_to_conductance()
             
-    def _remove_edge(self, edge):
+    def _remove_edge(self, edges):
         ''' Remove the edge from the graph. '''
         # determine the index of the edge in the list of edges
-        index_edge = list(self.graph.edges).index(tuple(edge))
-        self.graph.remove_edge(*edge)
+        index_edges = []
+        for edge in edges:
+            index_edges.append(list(self.graph.edges).index(tuple(edge)))
+        
+        self.graph.remove_edges_from(edges)
 
-        self.graph.remove_nodes_from(list(nx.isolates(self.graph)))
+        if len(list(nx.isolates(self.graph)))>0:
 
-        self.n = self.graph.number_of_nodes()
-        self.ne = self.graph.number_of_edges()
-        self.pts = np.array([self.graph.nodes[node]['pos'] for node in self.graph.nodes])
+            if np.intersect1d(np.r_[self.indices_source, self.indices_target.flatten()], list(nx.isolates(self.graph))).size > 0:
+                raise ValueError
+
+            self.graph.remove_nodes_from(list(nx.isolates(self.graph)))
+            idxSort = np.argsort(list(self.graph.nodes))
+            relabelMapping = {list(self.graph.nodes)[i]:idxSort[i] for i in range(idxSort.shape[0])}
+            self.graph = nx.relabel_nodes(self.graph, relabelMapping)
+            
+        else:
+            relabelMapping = np.arange(self.n)
+
         # remove the corresponding conductance
-        self.conductances = np.delete(self.conductances, index_edge)
+        self.conductances = np.delete(self.conductances, index_edges)
 
-        # if np.any(self.indices_source==index_edge)
-
+        return relabelMapping
         
     
 
