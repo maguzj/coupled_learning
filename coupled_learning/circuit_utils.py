@@ -80,7 +80,7 @@ class Circuit(object):
 
     def _jax_hessian(self):
         ''' Compute the Hessian of the network with respect to the conductances. '''
-        return jnp.dot(self.incidence_matrix.todense()*self.conductances,jnp.transpose(self.incidence_matrix.todense()))
+        return jnp.dot(self.incidence_matrix*self.conductances,jnp.transpose(self.incidence_matrix))
     
     def constraint_matrix(self, indices_nodes, restrictionType = 'node'):
         ''' Compute the constraint matrix Q for the circuit and the nodes represented by indices_nodes. 
@@ -204,7 +204,6 @@ class Circuit(object):
             Extended Hessian. H is a dense matrix of size (n + len(indices_nodes)) x (n + len(indices_nodes)).
         
         '''
-        Q = Q.todense()
 
         extendedHessian = jnp.block([[self._jax_hessian(), Q],[jnp.transpose(Q), jnp.zeros(shape=(jnp.shape(Q)[1],jnp.shape(Q)[1]))]])
         # bmat([[self._hessian(), Q], [Q.T, None]], format='csr', dtype=float)
@@ -363,6 +362,10 @@ class Circuit(object):
         # determine the index of the edge in the list of edges
         index_edge = list(self.graph.edges).index(tuple(edge))
         self.graph.remove_edge(*edge)
+
+        # if len(list(nx.isolates(self.graph)))>0:
+            # old_node_labels = 
+
         self.graph.remove_nodes_from(list(nx.isolates(self.graph)))
 
         self.n = self.graph.number_of_nodes()
@@ -371,6 +374,7 @@ class Circuit(object):
         # remove the corresponding conductance
         self.conductances = np.delete(self.conductances, index_edge)
 
+        # if np.any(self.indices_source==index_edge)
 
         
     
