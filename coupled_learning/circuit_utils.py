@@ -8,7 +8,8 @@ import matplotlib.pyplot as plt
 import copy
 import jax
 import jax.numpy as jnp
-
+from scipy.linalg import solve as scipy_solve
+import itertools
 class Circuit(object):
     ''' Class to simulate a circuit with trainable conductances 
     
@@ -369,7 +370,123 @@ class Circuit(object):
 
 
         
-    
+    '''
+	*****************************************************************************************************
+	*****************************************************************************************************
+
+										EFFECTIVE CONDUCTANCES
+
+	*****************************************************************************************************
+	*****************************************************************************************************
+	'''
+
+    def power_dissipated(self, voltages):
+        ''' Compute the power dissipated in the circuit for the given voltages. '''
+        # check that the conductances have been set
+        try:
+            self.conductances
+        except AttributeError:
+            raise AttributeError('Conductances have not been set yet.')
+        # check that the voltages have the right size
+        if len(voltages) != self.n:
+            raise ValueError('Voltages have the wrong size.')
+        # compute the power dissipated
+        voltage_drop = self.incidence_matrix.T.dot(voltages)
+        return np.sum(self.conductances*(voltage_drop**2)/2)
+
+    def effective_conductance(self, array_pair_indices_nodes, seed = 0):
+        ''' 
+        Compute the effective conductance between the pair of nodes represented contained in array_pair_indices_nodes.
+
+        Parameters
+        ----------
+        array_pair_indices_nodes : np.array
+            Array with the pairs of indices of the nodes for which we want the effective conductance. The order of the elements does not matter.
+        seed : int, optional
+            Seed for the random number generator. The default is 0.
+
+        Returns
+        -------
+        voltage_matrix : np.array
+            Matrix of size n_unique_nodes x n_unique_nodes. Each row corresponds to the (DV)^2/2 between all the different pairs of unique nodes in array_pair_indices_nodes.
+        power_vector : np.array
+            Vector of size n_unique_nodes. Each entry corresponds to the power dissipated in the circuit for the corresponding row in voltage_matrix.
+        effective_conductance : np.array
+            Vector of size len(array_pair_indices_nodes). Each entry corresponds to the effective conductance between the pair of nodes in array_pair_indices_nodes.
+        '''
+        # check that the conductances have been set
+        try:
+            self.conductances
+        except AttributeError:
+            raise AttributeError('Conductances have not been set yet.')
+        # check that the indices_nodes are valid
+        if array_pair_indices_nodes.shape[1] != 2:
+            raise ValueError('array_pair_indices_nodes must be a 2D array with shape (integer, 2).')
+
+
+        # extract the unique indices of the nodes
+        indices_nodes = np.unique(array_pair_indices_nodes)
+        # check that the nodes exist
+        if not all([node in self.graph.nodes for node in indices_nodes]):
+            raise ValueError('Some of the nodes do not exist.')
+
+        # generate array of all possible permutations of the indices_nodes
+        all_possible_pairs = np.array(list(itertools.combinations(indices_nodes, 2)))
+
+        # sort the arrays for better performance
+        sorted_array_pair_indices_nodes = np.sort(array_pair_indices_nodes, axis=1)
+        sorted_all_possible_pairs = np.sort(all_possible_pairs, axis=1)
+
+        matching_indices = []
+
+        for pair in sorted_array_pair_indices_nodes:
+            index = np.where(np.all(sorted_all_possible_pairs == pair, axis=1))[0]
+            if index.size != 0:
+                matching_indices.append(index[0])
+
+
+        # generate the linear system
+        voltage_matrix = []
+        power_vector = []
+
+        np.random.seed(seed)
+
+        for i in range(len(all_possible_pairs)):
+            f = np.random.rand(len(indices_nodes))
+            # generate the constraint matrix
+            Q = self.constraint_matrix(indices_nodes, restrictionType = 'node')
+            # solve the system
+            V_free = self.solve(Q, f)
+            # compute the voltage drops square based on the free state voltages and the array_pair_indices_nodes
+            voltage_drops = np.array([(V_free[all_possible_pairs[i,0]] - V_free[all_possible_pairs[i,1]])**2 for i in range(len(all_possible_pairs))])
+            # compute the power dissipated
+            power_dissipated = self.power_dissipated(V_free)
+            # add the voltage drops to the voltage matrix. Same for power
+            voltage_matrix.append(voltage_drops/2)
+            power_vector.append(power_dissipated)
+
+        # compute the effective conductance
+        voltage_matrix = np.array(voltage_matrix)
+        power_vector = np.array(power_vector)
+        # solve the linear system
+        effective_conductance = scipy_solve(voltage_matrix, power_vector)
+
+        # find the effective conductance corresponding to the pair of nodes in array_pair_indices_nodes
+        effective_conductance = effective_conductance[matching_indices]
+
+        return voltage_matrix, power_vector, effective_conductance
+
+
+
+    '''
+	*****************************************************************************************************
+	*****************************************************************************************************
+
+										EIGENVALUES AND EIGENVECTORS
+
+	*****************************************************************************************************
+	*****************************************************************************************************
+	'''
 
 
 

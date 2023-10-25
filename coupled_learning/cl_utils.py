@@ -211,7 +211,7 @@ class CL(Circuit):
         ''' Return the power state of the circuit for the current task. '''
         free_state = self.get_free_state()
         voltage_drop_free = self.incidence_matrix.T.dot(free_state)
-        return self.conductances*(voltage_drop_free**2)
+        return self.conductances*(voltage_drop_free**2)/2
 
         
 
