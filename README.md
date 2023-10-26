@@ -63,5 +63,8 @@ pip install -r requirements.txt
 
 ## TO DO LIST:
 
-- Implement edge allostery :white_check_mark:
-- Implement epochs :white_check_mark:
+- Implement conversion toJAX
+- Implement efficient prunning, back compatible with labeling and indices.
+- Implement plotting routines, using Ax as arguments.
+- Implement Read the Docs
+- Implement triangular networks
