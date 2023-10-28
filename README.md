@@ -32,9 +32,18 @@ Activate the environment, install numpy using pip and set the pip to be recogniz
 ```bash
 conda activate cl
 ```
+for numpy version 1.25.2 or older, then run
+
 ```bash
 pip install --no-binary :all: --no-use-pep517 numpy
 ```
+It seems that for newer versions --no-use-pep517 is deprecated. Instead, run
+```bash
+pip install --no-binary :all: numpy
+```
+
+Once numpy installed, run
+
 ```bash
 conda config --set pip_interop_enabled true
 ```
