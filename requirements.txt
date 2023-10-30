@@ -2,5 +2,8 @@ scipy
 matplotlib
 tqdm
 networkx
+numba
 jax
 cmocean
+poisson_disc
+vapory
