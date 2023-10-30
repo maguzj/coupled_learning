@@ -10,6 +10,10 @@ import jax
 import jax.numpy as jnp
 from scipy.linalg import solve as scipy_solve
 import itertools
+from  matplotlib.collections import LineCollection
+import matplotlib.patheffects as path_effects
+import matplotlib.tri as tri
+
 class Circuit(object):
     ''' Class to simulate a circuit with trainable conductances 
     
@@ -572,4 +576,69 @@ class Circuit(object):
         if filename:
             fig.savefig(filename, dpi = 300)
 
+    def plot_edge_state2(self, ax, edge_state, vmin, vmax, cmap = 'YlOrBr', lw = 1):
+        '''
+        Plot the state of the edges in the graph.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes
+            Axes object where the plot will be drawn.
+        edge_state : np.array
+            State of the edges in the graph. edge_state has size ne.
+        vmin : float
+            Minimum value of the colormap.
+        vmax : float
+            Maximum value of the colormap.
+        cmap : str, optional
+            Colormap. The default is 'YlOrBr'.
+        lw : float, optional
+            Linewidth. The default is 1.
+
+        Returns
+        -------
+        plt.cm.ScalarMappable
+            ScalarMappable object that can be used to add a colorbar to the plot.
+        '''
+        _cmap = plt.cm.get_cmap(cmap)
+        norm = plt.Normalize(vmin=vmin, vmax=vmax)
+        # create the line collection object
+        pos_edges = [np.array([self.graph.nodes[edge[0]]['pos'], self.graph.nodes[edge[1]]['pos']]) for edge in self.graph.edges()]
+        color_array = _cmap(norm(edge_state))
+        lc = LineCollection(pos_edges, color = color_array, linewidths = lw, path_effects=[path_effects.Stroke(capstyle="round")])
+        ax.add_collection(lc)
+
+        return plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+
+    def plot_node_state2(self, ax, node_state, vmin, vmax, cmap = 'viridis'):
+        ''' Plot the state of the nodes in the graph.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes
+            Axes object where the plot will be drawn.
+        node_state : np.array
+            State of the nodes in the graph. node_state has size n.
+        vmin : float
+            Minimum value of the colormap.
+        vmax : float
+            Maximum value of the colormap.
+        cmap : str, optional
+            Colormap. The default is 'RdYlBu_r'.
+
+        Returns
+        -------
+        plt.cm.ScalarMappable
+            ScalarMappable object that can be used to add a colorbar to the plot.
+        '''
+        posX = self.pts[:,0]
+        posY = self.pts[:,1]
+        norm = plt.Normalize(vmin=vmin, vmax=vmax)
+        triang = tri.Triangulation(posX, posY)
+        ax.tricontourf(triang, node_state, cmap = cmap, norm = norm, levels = 100)
+        # remove ticks
+        ax.set_xticks([])
+        ax.set_yticks([])
+        # show the colorbar
+        return plt.cm.ScalarMappable(norm=norm, cmap=cmap)
  
