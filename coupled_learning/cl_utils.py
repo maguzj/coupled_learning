@@ -10,6 +10,7 @@ import jax.numpy as jnp
 import jax
 import json
 import csv
+from jax import jit
 
 from scipy.sparse import hstack
 
@@ -262,6 +263,26 @@ class CL(Circuit):
         self.learning_step += 1
         
         return free_state, voltage_drop_free, delta_conductances, self.conductances
+
+    @staticmethod
+    @jit
+    def _jit_step_GD(conductances, learning_rate, min_k, max_k):
+        new_conductances = conductances - learning_rate*jax.grad(self.jax_MSE_loss)(conductances)
+        new_conductances = jnp.clip(new_conductances, min_k, max_k)
+        return new_conductances
+
+    @staticmethod
+    @jit
+    def MSE( conductances):
+        ''' Compute the MSE loss. '''
+        self.setConductances(conductances)
+        free_state = self.jax_solve(self.Q_free, self.inputs_source)
+        if self.target_type == 'node':
+            return 0.5*jnp.mean((free_state[self.indices_target] - self.outputs_target)**2)
+        elif self.target_type == 'edge':
+            # freeState_DV = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
+            freeState_DV = free_state[self.indices_target[:,0]] - free_state[self.indices_target[:,1]]
+            return 0.5*jnp.mean((freeState_DV - self.outputs_target)**2)
 
     def _step_GD(self):
         ''' Perform a step of gradient descent over the MSE. '''

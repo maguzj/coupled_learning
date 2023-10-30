@@ -11,6 +11,7 @@ import jax.numpy as jnp
 from scipy.linalg import solve as scipy_solve
 import itertools
 from  matplotlib.collections import LineCollection
+from matplotlib.collections import EllipseCollection
 import matplotlib.patheffects as path_effects
 import matplotlib.tri as tri
 
@@ -576,7 +577,7 @@ class Circuit(object):
         if filename:
             fig.savefig(filename, dpi = 300)
 
-    def plot_edge_state2(self, ax, edge_state, vmin, vmax, cmap = 'YlOrBr', lw = 1):
+    def edge_state_to_ax(self, ax, edge_state, vmin, vmax, cmap = 'YlOrBr', lw = 1):
         '''
         Plot the state of the edges in the graph.
 
@@ -610,7 +611,7 @@ class Circuit(object):
 
         return plt.cm.ScalarMappable(norm=norm, cmap=cmap)
 
-    def plot_node_state2(self, ax, node_state, vmin, vmax, cmap = 'viridis'):
+    def node_state_to_ax(self, ax, node_state, vmin, vmax, cmap = 'viridis', plot_mode = 'collection', radius = 0.1, zorder = 2):
         ''' Plot the state of the nodes in the graph.
 
         Parameters
@@ -625,6 +626,8 @@ class Circuit(object):
             Maximum value of the colormap.
         cmap : str, optional
             Colormap. The default is 'RdYlBu_r'.
+        plot_mode : str, optional
+            If 'collection', the nodes are plotted as a collection plot. If 'triangulation', the nodes are plotted as a triangulation. The default is 'collection'.
 
         Returns
         -------
@@ -634,11 +637,21 @@ class Circuit(object):
         posX = self.pts[:,0]
         posY = self.pts[:,1]
         norm = plt.Normalize(vmin=vmin, vmax=vmax)
-        triang = tri.Triangulation(posX, posY)
-        ax.tricontourf(triang, node_state, cmap = cmap, norm = norm, levels = 100)
-        # remove ticks
-        ax.set_xticks([])
-        ax.set_yticks([])
-        # show the colorbar
+
+        if plot_mode == 'collection':
+            # create a collection of ellipses
+            color_array = plt.cm.get_cmap(cmap)(norm(node_state))
+            r = np.ones(self.n)*radius
+            ec = EllipseCollection(r, r, np.zeros(self.n), color = color_array, linewidths = 1,offsets=self.pts,
+                       offset_transform=ax.transData, zorder=zorder)
+            ax.add_collection(ec)
+            
+
+            
+        elif plot_mode == 'triangulation':
+            triang = tri.Triangulation(posX, posY)
+            ax.tricontourf(triang, node_state, cmap = cmap, norm = norm, levels = 100)
+
+        # return the colorbar
         return plt.cm.ScalarMappable(norm=norm, cmap=cmap)
  
