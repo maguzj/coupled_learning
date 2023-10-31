@@ -4,6 +4,7 @@ tqdm
 networkx
 numba
 jax
+jaxlib
 cmocean
 poisson_disc
 vapory
