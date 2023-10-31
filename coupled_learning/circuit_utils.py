@@ -14,6 +14,7 @@ from  matplotlib.collections import LineCollection
 from matplotlib.collections import EllipseCollection
 import matplotlib.patheffects as path_effects
 import matplotlib.tri as tri
+from jax import jit
 
 class Circuit(object):
     ''' Class to simulate a circuit with trainable conductances 
@@ -87,6 +88,11 @@ class Circuit(object):
     def _jax_hessian(self):
         ''' Compute the Hessian of the network with respect to the conductances. '''
         return jnp.dot(self.incidence_matrix*self.conductances,jnp.transpose(self.incidence_matrix))
+    
+    @staticmethod
+    def _shessian(conductances,incidence_matrix):
+        ''' Compute the Hessian of the network with respect to the conductances. '''
+        return jnp.dot(incidence_matrix*conductances,jnp.transpose(incidence_matrix))
     
     def constraint_matrix(self, indices_nodes, restrictionType = 'node'):
         ''' Compute the constraint matrix Q for the circuit and the nodes represented by indices_nodes. 
@@ -214,6 +220,24 @@ class Circuit(object):
         # bmat([[self._hessian(), Q], [Q.T, None]], format='csr', dtype=float)
         return extendedHessian
 
+    @staticmethod
+    def _sextended_hessian(hessian,Q):
+        ''' Extend the hessian of the network with the constraint matrix Q. 
+
+        Parameters
+        ----------
+        Q : 
+            Constraint matrix Q
+
+        Returns
+        -------
+        H : 
+            Extended Hessian. H is a dense matrix of size (n + len(indices_nodes)) x (n + len(indices_nodes)).
+        
+        '''
+        extendedHessian = jnp.block([[hessian, Q],[jnp.transpose(Q), jnp.zeros(shape=(jnp.shape(Q)[1],jnp.shape(Q)[1]))]])
+        return extendedHessian
+
     
 
 
@@ -288,6 +312,31 @@ class Circuit(object):
         f_extended = jnp.hstack([jnp.zeros(self.n), f])
         # solve the system
         V = jax.scipy.linalg.solve(H, f_extended)[:self.n]
+        return V
+
+    @staticmethod
+    @jit
+    def ssolve(conductances, incidence_matrix, Q, f):
+        ''' Solve the circuit with the constraint matrix Q and the source vector f.
+
+        Parameters
+        ----------
+        Q : jnp.array
+            Constraint matrix Q
+        f : np.array
+            Source vector f. f has size len(indices_nodes).
+
+        Returns
+        -------
+        x : np.array
+            Solution vector V. V has size n.
+        '''
+        # extend the hessian
+        H = Circuit._sextended_hessian(Circuit._shessian(conductances,incidence_matrix),Q)
+        # extend f with n zeros
+        f_extended = jnp.hstack([jnp.zeros(jnp.shape(incidence_matrix)[0]), f])
+        # solve the system
+        V = jax.scipy.linalg.solve(H, f_extended)[:jnp.shape(incidence_matrix)[0]]
         return V
 
     '''
