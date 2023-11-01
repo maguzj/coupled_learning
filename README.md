@@ -64,5 +64,5 @@ git clone git@github.com:maguzj/coupled_learning.git
 - Implement efficient prunning, back compatible with labeling and indices.
 - Implement Read the Docs
 - Implement triangular networks
-- Implement GPU
-- Add speed tests
+- Implement GPU usage.
+- Tentative: try out the jax.experimental.sparse module to combine both JIT and sparse matrices.
