@@ -24,7 +24,7 @@ git clone git@github.com:maguzj/coupled_learning.git
      ```bash
      conda activate cl
      ```
-   - **For M1/M2 chips:** We have to build numpy with the accelerator.
+   - **For M1/M2 chips:** We have to build numpy with the accelerator. (:warning: this is constantly evolving. New OS will get rid of these tricks.)
      ```bash
      conda env create --file=environment-M1-M2.yml
      ```
@@ -61,8 +61,8 @@ git clone git@github.com:maguzj/coupled_learning.git
 
 ## TO DO LIST:
 
-- Implement conversion toJAX
 - Implement efficient prunning, back compatible with labeling and indices.
-- Implement plotting routines, using Ax as arguments.
 - Implement Read the Docs
 - Implement triangular networks
+- Implement GPU
+- Add speed tests
