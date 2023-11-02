@@ -777,19 +777,6 @@ class CL(Circuit):
                 "pts":self.pts.tolist(),
                 "edges":list(self.graph.edges)},f)
 
-    def read_graph(self,path):
-        ''' Read the graph of the circuit from JSON format '''
-        with open(path, 'r') as f:
-            data = json.load(f)
-        # first read the nodes ids, and their positions, then read the edges
-        self.graph = nx.Graph()
-        self.graph.add_nodes_from(data['nodes'])
-        self.pts = np.array(data['pts'])
-        self.graph.add_edges_from(data['edges'])
-        self.n = self.graph.number_of_nodes()
-        self.ne = self.graph.number_of_edges()
-        self.incidence_matrix = self.get_incidence_matrix()
-
     def save_global(self, path):
         ''' Save the attributes of the circuit in JSON format. '''
         # create a dictionary with the attributes
