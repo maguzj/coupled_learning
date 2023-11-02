@@ -38,3 +38,10 @@ def network_from_json(filename):
             graph.nodes[node]['pos'] = np.array(pts[i])
 
         return graph
+
+# def network_to_json(graph, filename):
+#     with open(filename, 'w') as f:
+#         json.dump({
+#             "nodes":list(graph.nodes),
+#             "pts":pts.tolist(),
+#             "edges":list(graph.edges)},f)
