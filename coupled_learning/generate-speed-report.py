@@ -41,9 +41,9 @@ def generate_speed_report():
         g = grid_network(size[0], size[1], periodic=False, size_uc = (1,1), relabel_nodes=True)
         lr = 0.1
         initial_conductances = np.ones(g.number_of_edges())
-        allo_CL_nojit = CL(g,initial_conductances,learning_rate=lr, jax = False)
-        allo_CL = CL(g,initial_conductances,learning_rate=lr, jax = True)
-        allo_GD = CL(g,initial_conductances,learning_rate=lr, jax = True)
+        allo_CL_nojit = CL(g,initial_conductances,learning_rate=lr, jax = False, name = 'CL_sparse_nojit')
+        allo_CL = CL(g,initial_conductances,learning_rate=lr, jax = True, name = 'CL_dense_jit')
+        allo_GD = CL(g,initial_conductances,learning_rate=lr, jax = True, name = 'GD_dense_jit')
 
         nodes_source = np.array([0,49,23])
         indices_source = np.array([list(allo_CL.graph.nodes).index(node) for node in nodes_source])
@@ -62,17 +62,17 @@ def generate_speed_report():
         eta = 0.1
 
         start_time = time.time()
-        _,_,_,_,_ = allo_CL_nojit.train(n_epochs, n_steps_per_epoch, eta = eta, verbose = False, pbar = False, log_spaced = False, save_state = False, save_path = f"{size[0]}x{size[1]}_CL_nojit")
+        _,_,_,_,_ = allo_CL_nojit.train(n_epochs, n_steps_per_epoch, eta = eta, verbose = False, pbar = False, log_spaced = False, save_global = True, save_state = True, save_path = allo_CL_nojit.name+f"_{size[0]}x{size[1]}")
         end_time = time.time()
         training_time_CL_nojit = end_time - start_time
 
         start_time = time.time()
-        _,_ = allo_CL.train_CL(n_epochs, n_steps_per_epoch, eta = eta, verbose = False, pbar = False, log_spaced = False, save_state = False, save_path = f"{size[0]}x{size[1]}_CL")
+        _,_ = allo_CL.train_CL(n_epochs, n_steps_per_epoch, eta = eta, verbose = False, pbar = False, log_spaced = False, save_global = True, save_state = True, save_path = allo_CL.name+f"_{size[0]}x{size[1]}")
         end_time = time.time()
         training_time_CL = end_time - start_time
 
         start_time = time.time()
-        _,_ = allo_GD.train_GD(n_epochs, n_steps_per_epoch, verbose = False, pbar = False, log_spaced = False, save_state = False, save_path = f"{size[0]}x{size[1]}_GD")
+        _,_ = allo_GD.train_GD(n_epochs, n_steps_per_epoch, verbose = False, pbar = False, log_spaced = False, save_global = False, save_state = True, save_path = allo_GD.name+f"_{size[0]}x{size[1]}")
         end_time = time.time()
         training_time_GD = end_time - start_time
 

@@ -315,7 +315,7 @@ class CL(Circuit):
             return 0.5*jnp.mean((freeState_DV - self.outputs_target)**2)
 
 
-    def train(self, n_epochs, n_steps_per_epoch, eta = 0.001, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = None):
+    def train(self, n_epochs, n_steps_per_epoch, eta = 0.001, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = 'trained_circuit'):
         ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of coupled learning.
         If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
         '''
@@ -535,7 +535,7 @@ class CL(Circuit):
         return self.conductances
 
 
-    def train_GD(self, n_epochs, n_steps_per_epoch, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = None):
+    def train_GD(self, n_epochs, n_steps_per_epoch, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = 'trained_circuit'):
         ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of gradient descent.
         If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
         '''
@@ -664,7 +664,7 @@ class CL(Circuit):
             raise Exception('task must be "node" or "edge"')
         return self.conductances
 
-    def train_CL(self, n_epochs, n_steps_per_epoch, eta, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = None):
+    def train_CL(self, n_epochs, n_steps_per_epoch, eta, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = 'trained_circuit'):
         ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of coupled learning.
         If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
         '''
@@ -780,6 +780,10 @@ class CL(Circuit):
     def save_global(self, path):
         ''' Save the attributes of the circuit in JSON format. '''
         # create a dictionary with the attributes
+        if jax:
+            losses = jax.device_get(jnp.array(self.losses)).astype(float).tolist()
+            energies = jax.device_get(jnp.array(self.energy)).astype(float).tolist()
+            powers = jax.device_get(jnp.array(self.power)).astype(float).tolist()
         dic = {
             "name": self.name,
             "n": self.n,
@@ -795,7 +799,9 @@ class CL(Circuit):
             "indices_target": self.indices_target.tolist(),
             "outputs_target": self.outputs_target.tolist(),
             "target_type": self.target_type,
-            "losses": self.losses,
+            "losses": losses,
+            "energy": energies,
+            "power": powers,
             "end_epoch": self.end_epoch
         }
         # save the dictionary in JSON format
@@ -977,6 +983,8 @@ def CL_from_file(jsonfile_global, jsonfile_graph, csv_local=None):
     name = data_global['name']
     jax = data_global['jax']
     losses = data_global['losses']
+    energies = data_global['energy']
+    powers = data_global['power']
     end_epoch = data_global['end_epoch']
 
     # extract the task
@@ -984,7 +992,7 @@ def CL_from_file(jsonfile_global, jsonfile_graph, csv_local=None):
     inputs_source = np.array(data_global['inputs_source'])
     indices_target = np.array(data_global['indices_target'])
     outputs_target = np.array(data_global['outputs_target'])
-    target_type = np.array(data_global['target_type'])
+    target_type = data_global['target_type']
 
     if jax:
         conductances = jnp.array(conductances)
@@ -993,7 +1001,7 @@ def CL_from_file(jsonfile_global, jsonfile_graph, csv_local=None):
         indices_target = jnp.array(indices_target)
         outputs_target = jnp.array(outputs_target)
 
-    allo = CL(graph, conductances, learning_rate, learning_step, min_k, max_k, name, jax, losses, end_epoch)
+    allo = CL(graph, conductances, learning_rate, learning_step, min_k, max_k, name, jax, losses, end_epoch, power = powers, energy = energies)
     if jax:
         allo.jax_set_task(indices_source, inputs_source, indices_target, outputs_target, target_type)
     else:
