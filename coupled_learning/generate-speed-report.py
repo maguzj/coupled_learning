@@ -62,17 +62,17 @@ def generate_speed_report():
         eta = 0.1
 
         start_time = time.time()
-        _,_,_,_,_ = allo_CL_nojit.train(n_epochs, n_steps_per_epoch, eta = eta, verbose = False, pbar = False, log_spaced = False, save_state = False)
+        _,_,_,_,_ = allo_CL_nojit.train(n_epochs, n_steps_per_epoch, eta = eta, verbose = False, pbar = False, log_spaced = False, save_state = False, save_path = f"{size[0]} x {size[1]}_CL_nojit")
         end_time = time.time()
         training_time_CL_nojit = end_time - start_time
 
         start_time = time.time()
-        _,_ = allo_CL.train_CL(n_epochs, n_steps_per_epoch, eta = eta, verbose = False, pbar = False, log_spaced = False, save_state = False)
+        _,_ = allo_CL.train_CL(n_epochs, n_steps_per_epoch, eta = eta, verbose = False, pbar = False, log_spaced = False, save_state = False, save_path = f"{size[0]} x {size[1]}_CL")
         end_time = time.time()
         training_time_CL = end_time - start_time
 
         start_time = time.time()
-        _,_ = allo_GD.train_GD(n_epochs, n_steps_per_epoch, verbose = False, pbar = False, log_spaced = False, save_state = False)
+        _,_ = allo_GD.train_GD(n_epochs, n_steps_per_epoch, verbose = False, pbar = False, log_spaced = False, save_state = False, save_path = f"{size[0]} x {size[1]}_GD")
         end_time = time.time()
         training_time_GD = end_time - start_time
 
