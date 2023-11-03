@@ -153,21 +153,19 @@ class CL(Circuit):
         '''
         self._add_source(indices_source, inputs_source)
         self._add_target(indices_target, outputs_target, target_type)
-        # Compute the constraint matrices
-        self.Q_free = self.constraint_matrix(self.indices_source)
-        if self.target_type == 'node':
-            self.Q_clamped = self.constraint_matrix(np.concatenate((self.indices_source, self.indices_target)))    
-        elif self.target_type == 'edge':
-            q_edge = self.constraint_matrix(indices_target, restrictionType='edge')
-            self.Q_clamped = hstack([self.Q_free, q_edge])
-            # constraintClamped = np.zeros((self.n, self.indices_source.shape[0] + self.indices_target.shape[0]))
-            # constraintClamped[self.indices_source, np.arange(self.indices_source.shape[0])] = 1
-            # constraintClamped[self.indices_target[:,1], self.indices_source.shape[0]+ np.arange(self.indices_target.shape[0])] = 1
-            # constraintClamped[self.indices_target[:,2], self.indices_source.shape[0]+ np.arange(self.indices_target.shape[0])] = -1
-            # clampedStateConstraintMatrix = csr_matrix(constraintClamped)
-            # self.Q_clamped = clampedStateConstraintMatrix
 
-        return self.Q_free, self.Q_clamped
+        if self.jax:
+            return self.jax_set_task(indices_source, inputs_source, indices_target, outputs_target, target_type)
+        else:
+            # Compute the constraint matrices
+            self.Q_free = self.constraint_matrix(self.indices_source)
+            if self.target_type == 'node':
+                self.Q_clamped = self.constraint_matrix(np.concatenate((self.indices_source, self.indices_target)))    
+            elif self.target_type == 'edge':
+                q_edge = self.constraint_matrix(indices_target, restrictionType='edge')
+                self.Q_clamped = hstack([self.Q_free, q_edge])
+
+            return self.Q_free, self.Q_clamped
 
     def jax_set_task(self, indices_source, inputs_source, indices_target, outputs_target, target_type='node'):
         ''' Set the task of the circuit.
@@ -202,14 +200,6 @@ class CL(Circuit):
         elif self.target_type == 'edge':
             q_edge = self.jax_constraint_matrix(indices_target, restrictionType='edge')
             self.Q_clamped = jnp.concatenate([self.Q_free,q_edge], axis=1)
-            # constraintClamped = np.zeros((self.n, self.indices_source.shape[0] + self.indices_target.shape[0]))
-            # constraintClamped[self.indices_source, np.arange(self.indices_source.shape[0])] = 1
-            # constraintClamped[self.indices_target[:,1], self.indices_source.shape[0]+ np.arange(self.indices_target.shape[0])] = 1
-            # constraintClamped[self.indices_target[:,2], self.indices_source.shape[0]+ np.arange(self.indices_target.shape[0])] = -1
-            # clampedStateConstraintMatrix = csr_matrix(constraintClamped)
-            # self.Q_clamped = clampedStateConstraintMatrix
-            # Throw exception
-            # raise Exception('jax_set_task not implemented for edge target type')
 
         return self.Q_free, self.Q_clamped
     
@@ -679,50 +669,91 @@ class CL(Circuit):
         else:
             actual_steps_per_epoch = n_steps_per_epoch
 
-        # initial state
-        if self.learning_step == 0:
-            self.end_epoch.append(self.learning_step)
-            self.losses.append(CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type))
-            if save_state:
-                self.save_local(save_path+'.csv')
-        else: #to avoid double counting the initial state
-            # remove the last element of power and energy
-            self.power.pop()
-            self.energy.pop()
-            # set the current power and energy to the last element
-            self.current_power = self.power[-1]
-            self.current_energy = self.energy[-1]
+        if self.jax: # Dense and JIT training (gpu)
+            # initial state
+            if self.learning_step == 0:
+                self.end_epoch.append(self.learning_step)
+                self.losses.append(CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type))
+                if save_state:
+                    self.save_local(save_path+'.csv')
+            else: #to avoid double counting the initial state
+                # remove the last element of power and energy
+                self.power.pop()
+                self.energy.pop()
+                # set the current power and energy to the last element
+                self.current_power = self.power[-1]
+                self.current_energy = self.energy[-1]
 
-        
-        
-        #training
-        for epoch in epochs:
-            if log_spaced:
-                actual_steps_per_epoch = n_steps_per_epoch[epoch]
-            conductances = self._siterate_CL(actual_steps_per_epoch, eta, self.target_type)
-            self.losses.append(CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type))
+            #training
+            for epoch in epochs:
+                if log_spaced:
+                    actual_steps_per_epoch = n_steps_per_epoch[epoch]
+                conductances = self._siterate_CL(actual_steps_per_epoch, eta, self.target_type)
+                self.losses.append(CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type))
+                self.power.append(self.current_power)
+                self.energy.append(self.current_energy)
+                if verbose:
+                    print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
+                self.epoch += 1
+                self.end_epoch.append(self.learning_step)
+                if save_state:
+                    # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
+                    self.save_local(save_path+'.csv')
+
+            # at the end of training, compute the current power and current energy, and save global and save graph
+            free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source)
+            voltage_drop_free = free_state.dot(self.incidence_matrix)
+            self.current_power = np.sum(self.conductances*(voltage_drop_free**2)/2)
+            self.current_energy += self.current_power
             self.power.append(self.current_power)
             self.energy.append(self.current_energy)
-            if verbose:
-                print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
-            self.epoch += 1
-            self.end_epoch.append(self.learning_step)
-            if save_state:
-                # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
-                self.save_local(save_path+'.csv')
-    
-        # at the end of training, compute the current power and current energy, and save global and save graph
-        free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source)
-        voltage_drop_free = free_state.dot(self.incidence_matrix)
-        self.current_power = np.sum(self.conductances*(voltage_drop_free**2)/2)
-        self.current_energy += self.current_power
-        self.power.append(self.current_power)
-        self.energy.append(self.current_energy)
 
-        if save_global:
-            self.save_global(save_path+'_global.json')
-            self.save_graph(save_path+'_graph.json')
-        return self.losses, conductances
+            if save_global:
+                self.save_global(save_path+'_global.json')
+                self.save_graph(save_path+'_graph.json')
+            return self.losses, conductances
+        else: # Sparse and no JIT training (no gpu)
+            # initial state
+            if self.learning_step == 0:
+                self.end_epoch.append(self.learning_step)
+                self.losses.append(self.MSE_loss(self.get_free_state()))
+                if save_state:
+                    self.save_local(save_path+'.csv')
+            else: #to avoid double counting the initial state
+                # remove the last element of power and energy
+                self.power.pop()
+                self.energy.pop()
+                # set the current power and energy to the last element
+                self.current_power = self.power[-1]
+                self.current_energy = self.energy[-1]
+
+            #training
+            for epoch in epochs:
+                if log_spaced:
+                    actual_steps_per_epoch = n_steps_per_epoch[epoch]
+                free_state, voltage_drop_free , delta_conductances , conductances = self.iterate_CL(actual_steps_per_epoch, eta)
+                self.losses.append(self.MSE_loss(free_state))
+                self.power.append(self.current_power)
+                self.energy.append(self.current_energy)
+                if verbose:
+                    print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
+                self.epoch += 1
+                self.end_epoch.append(self.learning_step)
+                if save_state:
+                    # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
+                    self.save_local(save_path+'.csv')
+
+            # at the end of training, compute the current power and current energy, and save global and save graph
+            self.current_power = np.sum(self.conductances*(voltage_drop_free**2)/2)
+            self.current_energy += self.current_power
+            self.power.append(self.current_power)
+            self.energy.append(self.current_energy)
+
+            if save_global:
+                self.save_global(save_path+'_global.json')
+                self.save_graph(save_path+'_graph.json')
+            return self.losses, conductances
+
     '''
 	*****************************************************************************************************
 	*****************************************************************************************************
