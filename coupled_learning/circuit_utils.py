@@ -8,6 +8,13 @@ import matplotlib.pyplot as plt
 import copy
 import jax
 import jax.numpy as jnp
+from scipy.linalg import solve as scipy_solve
+import itertools
+from  matplotlib.collections import LineCollection
+from matplotlib.collections import EllipseCollection
+import matplotlib.patheffects as path_effects
+import matplotlib.tri as tri
+from jax import jit
 
 class Circuit(object):
     ''' Class to simulate a circuit with trainable conductances 
@@ -81,6 +88,11 @@ class Circuit(object):
     def _jax_hessian(self):
         ''' Compute the Hessian of the network with respect to the conductances. '''
         return jnp.dot(self.incidence_matrix.todense()*self.conductances,jnp.transpose(self.incidence_matrix.todense()))
+    
+    @staticmethod
+    def _shessian(conductances,incidence_matrix):
+        ''' Compute the Hessian of the network with respect to the conductances. '''
+        return jnp.dot(incidence_matrix*conductances,jnp.transpose(incidence_matrix))
     
     def constraint_matrix(self, indices_nodes, restrictionType = 'node'):
         ''' Compute the constraint matrix Q for the circuit and the nodes represented by indices_nodes. 
@@ -210,6 +222,24 @@ class Circuit(object):
         # bmat([[self._hessian(), Q], [Q.T, None]], format='csr', dtype=float)
         return extendedHessian
 
+    @staticmethod
+    def _sextended_hessian(hessian,Q):
+        ''' Extend the hessian of the network with the constraint matrix Q. 
+
+        Parameters
+        ----------
+        Q : 
+            Constraint matrix Q
+
+        Returns
+        -------
+        H : 
+            Extended Hessian. H is a dense matrix of size (n + len(indices_nodes)) x (n + len(indices_nodes)).
+        
+        '''
+        extendedHessian = jnp.block([[hessian, Q],[jnp.transpose(Q), jnp.zeros(shape=(jnp.shape(Q)[1],jnp.shape(Q)[1]))]])
+        return extendedHessian
+
     
 
 
@@ -284,6 +314,31 @@ class Circuit(object):
         f_extended = jnp.hstack([jnp.zeros(self.n), f])
         # solve the system
         V = jax.scipy.linalg.solve(H, f_extended)[:self.n]
+        return V
+
+    @staticmethod
+    @jit
+    def ssolve(conductances, incidence_matrix, Q, f):
+        ''' Solve the circuit with the constraint matrix Q and the source vector f.
+
+        Parameters
+        ----------
+        Q : jnp.array
+            Constraint matrix Q
+        f : np.array
+            Source vector f. f has size len(indices_nodes).
+
+        Returns
+        -------
+        x : np.array
+            Solution vector V. V has size n.
+        '''
+        # extend the hessian
+        H = Circuit._sextended_hessian(Circuit._shessian(conductances,incidence_matrix),Q)
+        # extend f with n zeros
+        f_extended = jnp.hstack([jnp.zeros(jnp.shape(incidence_matrix)[0]), f])
+        # solve the system
+        V = jax.scipy.linalg.solve(H, f_extended)[:jnp.shape(incidence_matrix)[0]]
         return V
 
     '''
@@ -373,7 +428,123 @@ class Circuit(object):
 
 
         
-    
+    '''
+	*****************************************************************************************************
+	*****************************************************************************************************
+
+										EFFECTIVE CONDUCTANCES
+
+	*****************************************************************************************************
+	*****************************************************************************************************
+	'''
+
+    def power_dissipated(self, voltages):
+        ''' Compute the power dissipated in the circuit for the given voltages. '''
+        # check that the conductances have been set
+        try:
+            self.conductances
+        except AttributeError:
+            raise AttributeError('Conductances have not been set yet.')
+        # check that the voltages have the right size
+        if len(voltages) != self.n:
+            raise ValueError('Voltages have the wrong size.')
+        # compute the power dissipated
+        voltage_drop = self.incidence_matrix.T.dot(voltages)
+        return np.sum(self.conductances*(voltage_drop**2)/2)
+
+    def effective_conductance(self, array_pair_indices_nodes, seed = 0):
+        ''' 
+        Compute the effective conductance between the pair of nodes represented contained in array_pair_indices_nodes.
+
+        Parameters
+        ----------
+        array_pair_indices_nodes : np.array
+            Array with the pairs of indices of the nodes for which we want the effective conductance. The order of the elements does not matter.
+        seed : int, optional
+            Seed for the random number generator. The default is 0.
+
+        Returns
+        -------
+        voltage_matrix : np.array
+            Matrix of size n_unique_nodes x n_unique_nodes. Each row corresponds to the (DV)^2/2 between all the different pairs of unique nodes in array_pair_indices_nodes.
+        power_vector : np.array
+            Vector of size n_unique_nodes. Each entry corresponds to the power dissipated in the circuit for the corresponding row in voltage_matrix.
+        effective_conductance : np.array
+            Vector of size len(array_pair_indices_nodes). Each entry corresponds to the effective conductance between the pair of nodes in array_pair_indices_nodes.
+        '''
+        # check that the conductances have been set
+        try:
+            self.conductances
+        except AttributeError:
+            raise AttributeError('Conductances have not been set yet.')
+        # check that the indices_nodes are valid
+        if array_pair_indices_nodes.shape[1] != 2:
+            raise ValueError('array_pair_indices_nodes must be a 2D array with shape (integer, 2).')
+
+
+        # extract the unique indices of the nodes
+        indices_nodes = np.unique(array_pair_indices_nodes)
+        # check that the nodes exist
+        if not all([node in self.graph.nodes for node in indices_nodes]):
+            raise ValueError('Some of the nodes do not exist.')
+
+        # generate array of all possible permutations of the indices_nodes
+        all_possible_pairs = np.array(list(itertools.combinations(indices_nodes, 2)))
+
+        # sort the arrays for better performance
+        sorted_array_pair_indices_nodes = np.sort(array_pair_indices_nodes, axis=1)
+        sorted_all_possible_pairs = np.sort(all_possible_pairs, axis=1)
+
+        matching_indices = []
+
+        for pair in sorted_array_pair_indices_nodes:
+            index = np.where(np.all(sorted_all_possible_pairs == pair, axis=1))[0]
+            if index.size != 0:
+                matching_indices.append(index[0])
+
+
+        # generate the linear system
+        voltage_matrix = []
+        power_vector = []
+
+        np.random.seed(seed)
+
+        for i in range(len(all_possible_pairs)):
+            f = np.random.rand(len(indices_nodes))
+            # generate the constraint matrix
+            Q = self.constraint_matrix(indices_nodes, restrictionType = 'node')
+            # solve the system
+            V_free = self.solve(Q, f)
+            # compute the voltage drops square based on the free state voltages and the array_pair_indices_nodes
+            voltage_drops = np.array([(V_free[all_possible_pairs[i,0]] - V_free[all_possible_pairs[i,1]])**2 for i in range(len(all_possible_pairs))])
+            # compute the power dissipated
+            power_dissipated = self.power_dissipated(V_free)
+            # add the voltage drops to the voltage matrix. Same for power
+            voltage_matrix.append(voltage_drops/2)
+            power_vector.append(power_dissipated)
+
+        # compute the effective conductance
+        voltage_matrix = np.array(voltage_matrix)
+        power_vector = np.array(power_vector)
+        # solve the linear system
+        effective_conductance = scipy_solve(voltage_matrix, power_vector)
+
+        # find the effective conductance corresponding to the pair of nodes in array_pair_indices_nodes
+        effective_conductance = effective_conductance[matching_indices]
+
+        return voltage_matrix, power_vector, effective_conductance
+
+
+
+    '''
+	*****************************************************************************************************
+	*****************************************************************************************************
+
+										EIGENVALUES AND EIGENVECTORS
+
+	*****************************************************************************************************
+	*****************************************************************************************************
+	'''
 
 
 
@@ -459,4 +630,81 @@ class Circuit(object):
         if filename:
             fig.savefig(filename, dpi = 300)
 
+    def edge_state_to_ax(self, ax, edge_state, vmin, vmax, cmap = 'YlOrBr', lw = 1):
+        '''
+        Plot the state of the edges in the graph.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes
+            Axes object where the plot will be drawn.
+        edge_state : np.array
+            State of the edges in the graph. edge_state has size ne.
+        vmin : float
+            Minimum value of the colormap.
+        vmax : float
+            Maximum value of the colormap.
+        cmap : str, optional
+            Colormap. The default is 'YlOrBr'.
+        lw : float, optional
+            Linewidth. The default is 1.
+
+        Returns
+        -------
+        plt.cm.ScalarMappable
+            ScalarMappable object that can be used to add a colorbar to the plot.
+        '''
+        _cmap = plt.cm.get_cmap(cmap)
+        norm = plt.Normalize(vmin=vmin, vmax=vmax)
+        # create the line collection object
+        pos_edges = [np.array([self.graph.nodes[edge[0]]['pos'], self.graph.nodes[edge[1]]['pos']]) for edge in self.graph.edges()]
+        color_array = _cmap(norm(edge_state))
+        lc = LineCollection(pos_edges, color = color_array, linewidths = lw, path_effects=[path_effects.Stroke(capstyle="round")])
+        ax.add_collection(lc)
+
+        return plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+
+    def node_state_to_ax(self, ax, node_state, vmin, vmax, cmap = 'viridis', plot_mode = 'collection', radius = 0.1, zorder = 2):
+        ''' Plot the state of the nodes in the graph.
+
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes
+            Axes object where the plot will be drawn.
+        node_state : np.array
+            State of the nodes in the graph. node_state has size n.
+        vmin : float
+            Minimum value of the colormap.
+        vmax : float
+            Maximum value of the colormap.
+        cmap : str, optional
+            Colormap. The default is 'RdYlBu_r'.
+        plot_mode : str, optional
+            If 'collection', the nodes are plotted as a collection plot. If 'triangulation', the nodes are plotted as a triangulation. The default is 'collection'.
+
+        Returns
+        -------
+        plt.cm.ScalarMappable
+            ScalarMappable object that can be used to add a colorbar to the plot.
+        '''
+        posX = self.pts[:,0]
+        posY = self.pts[:,1]
+        norm = plt.Normalize(vmin=vmin, vmax=vmax)
+
+        if plot_mode == 'collection':
+            # create a collection of ellipses
+            color_array = plt.cm.get_cmap(cmap)(norm(node_state))
+            r = np.ones(self.n)*radius
+            ec = EllipseCollection(r, r, np.zeros(self.n), color = color_array, linewidths = 1,offsets=self.pts,
+                       offset_transform=ax.transData, zorder=zorder)
+            ax.add_collection(ec)
+            
+
+            
+        elif plot_mode == 'triangulation':
+            triang = tri.Triangulation(posX, posY)
+            ax.tricontourf(triang, node_state, cmap = cmap, norm = norm, levels = 100)
+
+        # return the colorbar
+        return plt.cm.ScalarMappable(norm=norm, cmap=cmap)
  

@@ -12,8 +12,8 @@ def grid_network(m, n, periodic=False, size_uc = (1,1), relabel_nodes=True):
 
     return graph
 
-def jammed_network(n, seed=0, relabel_nodes=True):
-    net = Packing(n, rfac=0.8, seed=seed, dim=2)
+def jammed_network(n, seed=0, relabel_nodes=True, rfac = 0.8):
+    net = Packing(n, rfac=rfac, seed=seed, dim=2)
     # net.params['contact'] = 0.2 # reduce the default contact repulsion
     net.generate()
     graph = net.graph
@@ -38,3 +38,10 @@ def network_from_json(filename):
             graph.nodes[node]['pos'] = np.array(pts[i])
 
         return graph
+
+# def network_to_json(graph, filename):
+#     with open(filename, 'w') as f:
+#         json.dump({
+#             "nodes":list(graph.nodes),
+#             "pts":pts.tolist(),
+#             "edges":list(graph.edges)},f)

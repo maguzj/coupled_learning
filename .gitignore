@@ -177,3 +177,5 @@ images/
 scaling_distance_nodes.py
 parameters.csv
 mathematica/
+*.csv
+*.json
