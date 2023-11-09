@@ -12,8 +12,8 @@ def grid_network(m, n, periodic=False, size_uc = (1,1), relabel_nodes=True):
 
     return graph
 
-def jammed_network(n, seed=0, relabel_nodes=True, rfac = 0.8):
-    net = Packing(n, rfac=rfac, seed=seed, dim=2)
+def jammed_network(n, seed=0, relabel_nodes=True, rfac = 0.8, radius=0, params={'central':0.0005, 'drag':0.05, 'contact':0.1}):
+    net = Packing(n, dim=2, radius=radius, rfac=rfac, params=params, seed=seed)
     # net.params['contact'] = 0.2 # reduce the default contact repulsion
     net.generate()
     graph = net.graph
