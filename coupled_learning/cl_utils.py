@@ -1002,11 +1002,14 @@ def CL_from_file(jsonfile_global, jsonfile_graph, csv_local=None):
         data_global = json.load(f)
     with open(jsonfile_graph, 'r') as f:
         data_graph = json.load(f)
-    if csv_local:
-        conductances = load_from_csv(csv_local)[-1]
     
     # extract the attributes
     graph = network_from_json(jsonfile_graph)
+    if csv_local:
+        conductances = load_from_csv(csv_local)[-1]
+    else:
+        conductances = np.ones(len(graph.edges))
+
     learning_rate = data_global['learning_rate']
     learning_step = data_global['learning_step']
     min_k = data_global['min_k']
