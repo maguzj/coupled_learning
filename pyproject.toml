@@ -1,0 +1,8 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "coupled_learning"
+authors = [{name = "Javier", email = "jfarach@seas.upenn.edu"}]
+dynamic = ["version", "description"]
