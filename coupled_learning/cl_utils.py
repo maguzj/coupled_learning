@@ -272,6 +272,26 @@ class CL(Circuit):
         else:
             raise Exception('target_type must be "node" or "edge"' )
 
+    @staticmethod
+    def gradient_MSE(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target, target_type):
+        if target_type == 'node':
+            grad_func = jax.grad(CL.MSE_NA, argnums=0)
+        elif target_type == 'edge':
+            grad_func = jax.grad(CL.MSE_EA, argnums=0)
+        else:
+            raise ValueError('target_type must be "node" or "edge"')
+        return grad_func(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
+
+    @staticmethod
+    def hessian_MSE(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target, target_type):
+        if target_type == 'node':
+            hessian_func = jax.hessian(CL.MSE_NA, argnums=0)
+        elif target_type == 'edge':
+            hessian_func = jax.hessian(CL.MSE_EA, argnums=0)
+        else:
+            raise ValueError('target_type must be "node" or "edge"')
+        return hessian_func(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
+
 
     def jaxify(self):
         ''' Jaxify the circuit. '''
