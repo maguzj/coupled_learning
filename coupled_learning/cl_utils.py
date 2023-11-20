@@ -5,7 +5,7 @@ from network_utils import *
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import pickle
-from scipy.sparse import csr_matrix
+from scipy.sparse import csr_matrix, csc_array
 import jax.numpy as jnp
 import jax
 import json
@@ -271,6 +271,66 @@ class CL(Circuit):
             return CL.MSE_EA(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
         else:
             raise Exception('target_type must be "node" or "edge"' )
+
+
+    def jaxify(self):
+        ''' Jaxify the circuit. '''
+        
+        converted = False
+        if not self.jax:
+            self.jax = True
+            converted = True
+        
+        if not isinstance(self.Q_free, jnp.ndarray):
+            self.Q_free = jnp.array(self.Q_free.todense())
+            converted = True
+
+        if not isinstance(self.Q_clamped, jnp.ndarray):
+            self.Q_clamped = jnp.array(self.Q_clamped.todense())
+            converted = True
+
+        if not isinstance(self.incidence_matrix, jnp.ndarray):
+            self.incidence_matrix = jnp.array(self.incidence_matrix.todense())
+            converted = True
+
+        if not isinstance(self.conductances, jnp.ndarray):
+            self.conductances = jnp.array(self.conductances)
+            converted = True
+
+        if converted:
+            print('Converted to jax')
+        else:
+            print('Already jaxified')
+
+    def sparsify(self):
+        ''' Sparsify the circuit. '''
+        converted = False
+        if self.jax:
+            self.jax = False
+            converted = True
+        
+        if isinstance(self.Q_free, jnp.ndarray):
+            self.Q_free = csr_matrix(self.Q_free, dtype = np.float64)
+            converted = True
+
+        if isinstance(self.Q_clamped, jnp.ndarray):
+            self.Q_clamped = csr_matrix(self.Q_clamped, dtype = np.float64)
+            converted = True
+
+        if isinstance(self.incidence_matrix, jnp.ndarray):
+            self.incidence_matrix = csc_array(self.incidence_matrix, dtype = np.float64)
+            converted = True
+
+        if isinstance(self.conductances, jnp.ndarray):
+            self.conductances = np.array(self.conductances, dtype = np.float64)
+            converted = True
+
+        if converted:
+            print('Converted to sparse')
+        else:
+            print('Already sparse')
+        
+        
     
     '''
 	*****************************************************************************************************
@@ -286,6 +346,9 @@ class CL(Circuit):
     ########################################        
     ########### COUPLED LEARNING ############
     ########################################
+
+
+
 
     def _step_CL(self, eta = 0.001):
         ''' Perform a step of coupled learning. '''
