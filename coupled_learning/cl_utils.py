@@ -801,7 +801,7 @@ class CL(Circuit):
         #     f.write('\t"pts": {},\n'.format(self.pts.tolist()))
         #     f.write('\t"edges": {}\n'.format(list(self.graph.edges)))
         #     f.write('}')
-
+        
         with open(path, 'w') as f:
             json.dump({
                 "nodes":list(self.graph.nodes),
