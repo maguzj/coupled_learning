@@ -18,7 +18,9 @@ def spread_state(pos_x, pos_y, state):
     float
         The spreading of the state over the network.
     """
-    return np.dot(state, pos_x**2*state)+np.dot(state, pos_y**2*state)-np.dot(state, pos_x*state)**2-np.dot(state, pos_y*state)**2
+    weighted_x = pos_x*state
+    weighted_y = pos_y*state
+    return np.dot(weighted_x, weighted_x)+np.dot(weighted_y, weighted_y)-np.dot(state, weighted_x)**2-np.dot(state, weighted_y)**2
 
 def spread_basis(pos_x, pos_y, basis):
     """Compute the spreading of a basis over the network.
@@ -114,3 +116,47 @@ def localize(pos_x, pos_y, basis, step_size, n_epochs, n_steps_per_epoch, with_n
             basis = _GD_step(pos_x, pos_y, basis, step_size, with_noise, noise_amplitude)
         spread_history.append(spread_basis(pos_x, pos_y, basis))
     return basis, spread_history, end_epoch
+
+def get_partition(basis):
+    """
+    Compute the partition of the network given the basis of the eigenvectors.
+    The partition is computed by assigning each node to the basis vector that maximizes its absolute value.
+    """
+    return np.argmax(np.abs(basis), axis=1)
+
+def get_boundary(incidence_matrix, partition):
+    """
+    Compute the boundary of the network given the partition.
+    The boundary corresponds to a boolean array of edges.
+    The boundary is computed by finding the edges that connect nodes belonging to different regions in the partition.
+    Notice that incidence_matrix is the matrix of (edges, nodes). (it may be the transpose of the network incidence matrix)
+    """
+    return np.abs(incidence_matrix.dot(partition)) > 0 
+
+def mask_overlap(edge_state, partition_boundary):
+    """
+    Returns a mask of the edge_state array. 
+    The mask is True for the edges that are both in edge_state and partition_boundary in descending order of edge_state.
+    The mask is False from the first edge that is not in partition_boundary.
+    """
+    
+    sorted_indices = np.argsort(-edge_state) # Sort the indices of edge_state in descending order
+    inverse_indices = np.empty_like(sorted_indices)
+    inverse_indices[sorted_indices] = np.arange(len(sorted_indices))
+
+    mask = (edge_state*partition_boundary > 0)[sorted_indices]
+    first_false_index = np.argmin(mask)
+    mask[first_false_index:] = False
+
+    return mask[inverse_indices]
+
+def get_physical_boundary(edge_basis, boundary_partition):
+    """
+    Compute the physical boundary of the network given the edge basis and the boundary partition.
+    The physical boundary is a boolean array of edges.
+    It corresponds to the boolean addition of the mask_overlap between each basis vector and the boundary partition.
+    """
+    physical_boundary = np.zeros(edge_basis.shape[0], dtype=bool)
+    for i in range(edge_basis.shape[1]):
+        physical_boundary += mask_overlap(edge_basis[:,i], boundary_partition)
+    return physical_boundary
