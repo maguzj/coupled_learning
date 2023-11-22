@@ -131,7 +131,7 @@ def get_boundary(incidence_matrix, partition):
     The boundary is computed by finding the edges that connect nodes belonging to different regions in the partition.
     Notice that incidence_matrix is the matrix of (edges, nodes). (it may be the transpose of the network incidence matrix)
     """
-    return np.abs(incidence_matrix.dot(partition)) > 0 
+    return np.abs(incidence_matrix.T.dot(partition)) > 0 
 
 def mask_overlap(edge_state, partition_boundary):
     """
