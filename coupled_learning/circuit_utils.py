@@ -216,8 +216,6 @@ class Circuit(object):
             Extended Hessian. H is a dense matrix of size (n + len(indices_nodes)) x (n + len(indices_nodes)).
         
         '''
-        Q = Q.todense()
-
         extendedHessian = jnp.block([[self._jax_hessian(), Q],[jnp.transpose(Q), jnp.zeros(shape=(jnp.shape(Q)[1],jnp.shape(Q)[1]))]])
         # bmat([[self._hessian(), Q], [Q.T, None]], format='csr', dtype=float)
         return extendedHessian
