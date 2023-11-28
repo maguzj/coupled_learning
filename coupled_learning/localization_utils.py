@@ -124,14 +124,14 @@ def get_partition(basis):
     """
     return np.argmax(np.abs(basis), axis=1)
 
-def get_boundary(incidence_matrix, partition):
+def get_boundary(transpose_incidence_matrix, partition):
     """
     Compute the boundary of the network given the partition.
     The boundary corresponds to a boolean array of edges.
     The boundary is computed by finding the edges that connect nodes belonging to different regions in the partition.
-    Notice that incidence_matrix is the matrix of (edges, nodes). (it may be the transpose of the network incidence matrix)
+    transpose_incidence_matrix is the matrix of (edges, nodes), the transpose of each Circuit instance's incidence matrix.
     """
-    return np.abs(incidence_matrix.T.dot(partition)) > 0 
+    return np.abs(transpose_incidence_matrix.dot(partition)) > 0 
 
 def mask_overlap(edge_state, partition_boundary):
     """
