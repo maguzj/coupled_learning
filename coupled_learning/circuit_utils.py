@@ -87,7 +87,7 @@ class Circuit(object):
 
     def _jax_hessian(self):
         ''' Compute the Hessian of the network with respect to the conductances. '''
-        return jnp.dot(self.incidence_matrix.todense()*self.conductances,jnp.transpose(self.incidence_matrix.todense()))
+        return jnp.dot(self.incidence_matrix*self.conductances,jnp.transpose(self.incidence_matrix))
     
     @staticmethod
     def _shessian(conductances,incidence_matrix):
@@ -418,8 +418,6 @@ class Circuit(object):
         # determine the index of the edge in the list of edges
         index_edge = list(self.graph.edges).index(tuple(edge))
         self.graph.remove_edge(*edge)
-        self.graph.remove_nodes_from(list(nx.isolates(self.graph)))
-
         self.n = self.graph.number_of_nodes()
         self.ne = self.graph.number_of_edges()
         self.pts = np.array([self.graph.nodes[node]['pos'] for node in self.graph.nodes])
