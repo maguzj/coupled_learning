@@ -420,12 +420,11 @@ class CL(Circuit):
             clamped_state = self.solve(self.Q_clamped, np.concatenate((self.inputs_source[batchInput], nudge)))
 
             # voltage drop
-            # ROOM FOR IMPROVEMENT? WE ARE TRANSPOSING THE INCIDENCE MATRIX AT EACH STEP
             voltage_drop_free = transpose_incidence_matrix.dot(free_state)/batchSize
             voltage_drop_clamped = transpose_incidence_matrix.dot(clamped_state)/batchSize
             
             # Update the conductances
-            delta_conductances += -1.0/eta * (voltage_drop_clamped**2 - voltage_drop_free**2)
+            delta_conductances += -1.0/eta * (voltage_drop_clamped**2 - voltage_drop_free**2)/batchSize
 
             averageInferencePower += np.sum(self.conductances*(voltage_drop_free**2)/2)/batchSize
         # power
@@ -503,47 +502,71 @@ class CL(Circuit):
             self.save_graph(save_path+'_graph.json')
         return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
 
-    @staticmethod
-    @jit
-    def _sstep_CL_NA(conductances, incidence_matrix, Q_free, Q_clamped, inputs_source, indices_target, outputs_target, learning_rate, min_k, max_k, eta):
+    # @staticmethod
+    # @jit
+    def _sstep_CL_NA(conductances, incidence_matrix, Q_free, Q_clamped, inputs_source, indices_target, outputs_target, batchInputs, learning_rate, min_k, max_k, eta):
         ''' Perform a step of coupled learning for Node Allostery. '''
-        free_state = Circuit.ssolve(conductances, incidence_matrix, Q_free, inputs_source[0])
+        batchSize = batchInputs.shape[0]
+        transpose_incidence_matrix = incidence_matrix.T
+        voltage_drop_free = np.zeros(incidence_matrix.shape[1])
+        voltage_drop_clamped = np.zeros(incidence_matrix.shape[1])
+        delta_conductances = np.zeros(incidence_matrix.shape[1])
+        averageInferencePower = 0
 
-        nudge = free_state[indices_target] + eta * (outputs_target - free_state[indices_target])
+        for batchInput in batchInputs:
+            free_state = Circuit.ssolve(conductances, incidence_matrix, Q_free, inputs_source[batchInput])
 
-        clamped_state = Circuit.ssolve(conductances, incidence_matrix,Q_clamped, jnp.concatenate((inputs_source, nudge)))
+            nudge = free_state[indices_target] + eta * (outputs_target[batchInput] - free_state[indices_target])
 
-        # ROOM FOR IMPROVEMENT? WE ARE TRANSPOSING THE INCIDENCE MATRIX AT EACH STEP
-        voltage_drop_free = incidence_matrix.T.dot(free_state)
-        voltage_drop_clamped = incidence_matrix.T.dot(clamped_state)
+            clamped_state = Circuit.ssolve(conductances, incidence_matrix,Q_clamped, jnp.concatenate((inputs_source[batchInput], nudge)))
 
+            # voltage drop
+            print(transpose_incidence_matrix.shape, free_state.shape)
+            voltage_drop_free = transpose_incidence_matrix.dot(free_state)/batchSize
+            voltage_drop_clamped = transpose_incidence_matrix.dot(clamped_state)/batchSize
+            
+            # Update the conductances
+            delta_conductances += -1.0/eta * (voltage_drop_clamped**2 - voltage_drop_free**2)/batchSize
+
+            averageInferencePower += np.sum(conductances*(voltage_drop_free**2)/2)/batchSize
         # power
-        current_power = np.sum(conductances*(voltage_drop_free**2)/2)
+        current_power = averageInferencePower
 
         # Update the conductances
-        delta_conductances = -1.0/eta * (voltage_drop_clamped**2 - voltage_drop_free**2)
         new_conductances = conductances + learning_rate*delta_conductances
         new_conductances = jnp.clip(new_conductances, min_k, max_k)
 
         return free_state, voltage_drop_free, delta_conductances, new_conductances, current_power
 
-    @staticmethod
-    @jit
-    def _sstep_CL_EA(conductances, incidence_matrix, Q_free, Q_clamped, inputs_source, indices_target, outputs_target, learning_rate, min_k, max_k, eta):
+    # @staticmethod
+    # @jit
+    def _sstep_CL_EA(conductances, incidence_matrix, Q_free, Q_clamped, inputs_source, indices_target, outputs_target, batchInputs, learning_rate, min_k, max_k, eta):
         ''' Perform a step of coupled learning for Edge Allostery '''
-        free_state = Circuit.ssolve(conductances, incidence_matrix, Q_free, inputs_source[0])
+        batchSize = batchInputs.shape[0]
+        transpose_incidence_matrix = incidence_matrix.T
+        voltage_drop_free = np.zeros(incidence_matrix.shape[1])
+        voltage_drop_clamped = np.zeros(incidence_matrix.shape[1])
+        delta_conductances = np.zeros(incidence_matrix.shape[1])
+        averageInferencePower = 0
 
-        DP = free_state[indices_target[:,0]] - free_state[indices_target[:,1]]
-        nudge = DP + eta * (outputs_target - DP)
+        for batchInput in batchInputs:
+            free_state = Circuit.ssolve(conductances, incidence_matrix, Q_free, inputs_source[batchInput])
 
-        clamped_state = Circuit.ssolve(conductances, incidence_matrix,Q_clamped, jnp.concatenate((inputs_source, nudge)))
+            DP = free_state[indices_target[:,0]] - free_state[indices_target[:,1]]
+            nudge = DP + eta * (outputs_target[batchInput] - DP)
 
-        # ROOM FOR IMPROVEMENT? WE ARE TRANSPOSING THE INCIDENCE MATRIX AT EACH STEP
-        voltage_drop_free = incidence_matrix.T.dot(free_state)
-        voltage_drop_clamped = incidence_matrix.T.dot(clamped_state)
+            clamped_state = Circuit.ssolve(conductances, incidence_matrix,Q_clamped, jnp.concatenate((inputs_source[batchInput], nudge)))
 
+            # voltage drop
+            voltage_drop_free = transpose_incidence_matrix.dot(free_state)/batchSize
+            voltage_drop_clamped = transpose_incidence_matrix.dot(clamped_state)/batchSize
+            
+            # Update the conductances
+            delta_conductances += -1.0/eta * (voltage_drop_clamped**2 - voltage_drop_free**2)/batchSize
+
+            averageInferencePower += np.sum(conductances*(voltage_drop_free**2)/2)/batchSize
         # power
-        current_power = np.sum(conductances*(voltage_drop_free**2)/2)
+        current_power += averageInferencePower
 
         # Update the conductances
         delta_conductances = -1.0/eta * (voltage_drop_clamped**2 - voltage_drop_free**2)
@@ -552,19 +575,21 @@ class CL(Circuit):
 
         return free_state, voltage_drop_free, delta_conductances, new_conductances, current_power
 
-    def _siterate_CL(self, n_steps, eta, task):
+    def _siterate_CL(self, n_steps, eta, batchSize, task):
         ''' Iterate coupled learning for n_steps.
         task is a string: "node" (node allostery) or "edge" (edge allostery)
         '''
+        batchInputs = np.random.choice(self.inputs_source.shape[0], batchSize, replace=False)
+
         if task == "node":
             for i in range(n_steps):
-                _, _, _, self.conductances, current_power = CL._sstep_CL_NA(self.conductances, self.incidence_matrix, self.Q_free, self.Q_clamped, self.inputs_source, self.indices_target, self.outputs_target, self.learning_rate, self.min_k, self.max_k, eta)
+                _, _, _, self.conductances, current_power = CL._sstep_CL_NA(self.conductances, self.incidence_matrix, self.Q_free, self.Q_clamped, self.inputs_source, self.indices_target, self.outputs_target, batchInputs, self.learning_rate, self.min_k, self.max_k, eta)
                 self.current_power = current_power
                 self.current_energy += self.current_power
                 self.learning_step += 1
         elif task == "edge":
             for i in range(n_steps):
-                _, _, _, self.conductances, current_power = CL._sstep_CL_EA(self.conductances, self.incidence_matrix, self.Q_free, self.Q_clamped, self.inputs_source, self.indices_target, self.outputs_target, self.learning_rate, self.min_k, self.max_k, eta)
+                _, _, _, self.conductances, current_power = CL._sstep_CL_EA(self.conductances, self.incidence_matrix, self.Q_free, self.Q_clamped, self.inputs_source, self.indices_target, self.outputs_target, batchInputs, self.learning_rate, self.min_k, self.max_k, eta)
                 self.current_power = current_power
                 self.current_energy += self.current_power
                 self.learning_step += 1
@@ -573,7 +598,7 @@ class CL(Circuit):
         return self.conductances
 
     
-    def train_CL(self, n_epochs, n_steps_per_epoch, eta, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = 'trained_circuit'):
+    def train_CL(self, n_epochs, n_steps_per_epoch, eta, batchSize=1, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = 'trained_circuit'):
         ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of coupled learning.
         If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
         '''
@@ -607,7 +632,7 @@ class CL(Circuit):
             for epoch in epochs:
                 if log_spaced:
                     actual_steps_per_epoch = n_steps_per_epoch[epoch]
-                conductances = self._siterate_CL(actual_steps_per_epoch, eta, self.target_type)
+                conductances = self._siterate_CL(actual_steps_per_epoch, eta, batchSize, self.target_type)
                 self.losses.append(CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type))
                 self.power.append(self.current_power)
                 self.energy.append(self.current_energy)
