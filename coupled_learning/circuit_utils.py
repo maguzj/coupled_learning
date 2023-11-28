@@ -630,7 +630,7 @@ class Circuit(object):
         if filename:
             fig.savefig(filename, dpi = 300)
 
-    def edge_state_to_ax(self, ax, edge_state, vmin, vmax, cmap = 'YlOrBr', lw = 1):
+    def edge_state_to_ax(self, ax, edge_state, vmin, vmax, cmap = 'YlOrBr', lw = 1, annotate = False):
         '''
         Plot the state of the edges in the graph.
 
@@ -648,6 +648,8 @@ class Circuit(object):
             Colormap. The default is 'YlOrBr'.
         lw : float, optional
             Linewidth. The default is 1.
+        annotate : bool, optional
+            If True, the edges are annotated with their index. The default is False.
 
         Returns
         -------
@@ -662,9 +664,14 @@ class Circuit(object):
         lc = LineCollection(pos_edges, color = color_array, linewidths = lw, path_effects=[path_effects.Stroke(capstyle="round")])
         ax.add_collection(lc)
 
+        if annotate:
+            for i in range(self.ne):
+                ax.annotate(str(i), (np.mean(pos_edges[i][:,0]), np.mean(pos_edges[i][:,1])), fontsize = 2*lw, color = 'black', ha = 'center', va = 'center', zorder = 3, path_effects=[path_effects.withStroke(linewidth=2*lw,
+                                                        foreground="w")])
+
         return plt.cm.ScalarMappable(norm=norm, cmap=cmap)
 
-    def node_state_to_ax(self, ax, node_state, vmin, vmax, cmap = 'viridis', plot_mode = 'collection', radius = 0.1, zorder = 2):
+    def node_state_to_ax(self, ax, node_state, vmin, vmax, cmap = 'viridis', plot_mode = 'collection', radius = 0.1, zorder = 2, annotate = False):
         ''' Plot the state of the nodes in the graph.
 
         Parameters
@@ -681,6 +688,12 @@ class Circuit(object):
             Colormap. The default is 'RdYlBu_r'.
         plot_mode : str, optional
             If 'collection', the nodes are plotted as a collection plot. If 'triangulation', the nodes are plotted as a triangulation. The default is 'collection'.
+        radius : float, optional
+            Radius of the nodes. The default is 0.1.
+        zorder : int, optional
+            Zorder of the nodes. The default is 2.
+        annotate : bool, optional
+            If True, the nodes are annotated with their index. The default is False.
 
         Returns
         -------
@@ -704,6 +717,10 @@ class Circuit(object):
         elif plot_mode == 'triangulation':
             triang = tri.Triangulation(posX, posY)
             ax.tricontourf(triang, node_state, cmap = cmap, norm = norm, levels = 100)
+
+        if annotate:
+            for i in range(self.n):
+                ax.annotate(str(i), (posX[i], posY[i]), fontsize = 0.8*radius, color = 'black', ha = 'center', va = 'center', zorder = 3)
 
         # return the colorbar
         return plt.cm.ScalarMappable(norm=norm, cmap=cmap)

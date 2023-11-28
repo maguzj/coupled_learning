@@ -145,8 +145,11 @@ def mask_overlap(edge_state, partition_boundary):
     inverse_indices[sorted_indices] = np.arange(len(sorted_indices))
 
     mask = (edge_state*partition_boundary > 0)[sorted_indices]
-    first_false_index = np.argmin(mask)
-    mask[first_false_index:] = False
+    # first_false_index = np.argmin(mask) # fails when everything is True; it converts everything to False
+    if False in mask:
+        first_false_index = np.argmin(mask)
+        mask[first_false_index:] = False
+    
 
     return mask[inverse_indices]
 

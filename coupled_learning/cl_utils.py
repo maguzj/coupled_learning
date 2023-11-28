@@ -237,6 +237,7 @@ class CL(Circuit):
 
     def jax_MSE_loss(self, conductances):
         ''' Compute the MSE loss. '''
+        print("This function is deprecated. Use MSE instead.")
         self.setConductances(conductances)
         free_state = self.jax_solve(self.Q_free, self.inputs_source)
         if self.target_type == 'node':
