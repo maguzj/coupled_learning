@@ -45,7 +45,7 @@ class Circuit(object):
 
         self.n = len(self.graph.nodes)
         self.ne = len(self.graph.edges)
-        self.pts = np.array([self.graph.nodes[node]['pos'] for node in graph.nodes])
+        self.pts = np.array([self.graph.nodes[node]['pos'] for node in self.graph.nodes])
 
         self.incidence_matrix = nx.incidence_matrix(self.graph, oriented=True)
         if jax:
