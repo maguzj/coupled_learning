@@ -216,6 +216,7 @@ class Circuit(object):
             Extended Hessian. H is a dense matrix of size (n + len(indices_nodes)) x (n + len(indices_nodes)).
         
         '''
+
         extendedHessian = jnp.block([[self._jax_hessian(), Q],[jnp.transpose(Q), jnp.zeros(shape=(jnp.shape(Q)[1],jnp.shape(Q)[1]))]])
         # bmat([[self._hessian(), Q], [Q.T, None]], format='csr', dtype=float)
         return extendedHessian
@@ -411,18 +412,32 @@ class Circuit(object):
         self.pts = np.array([self.graph.nodes[node]['pos'] for node in self.graph.nodes])
         self.weight_to_conductance()
             
-    def _remove_edge(self, edge):
+    def _remove_edge(self, edges):
         ''' Remove the edge from the graph. '''
         # determine the index of the edge in the list of edges
-        index_edge = list(self.graph.edges).index(tuple(edge))
-        self.graph.remove_edge(*edge)
-        self.n = self.graph.number_of_nodes()
-        self.ne = self.graph.number_of_edges()
-        self.pts = np.array([self.graph.nodes[node]['pos'] for node in self.graph.nodes])
+        index_edges = []
+        for edge in edges:
+            index_edges.append(list(self.graph.edges).index(tuple(edge)))
+        
+        self.graph.remove_edges_from(edges)
+
+        if len(list(nx.isolates(self.graph)))>0:
+
+            if np.intersect1d(np.r_[self.indices_source, self.indices_target.flatten()], list(nx.isolates(self.graph))).size > 0:
+                raise ValueError
+
+            self.graph.remove_nodes_from(list(nx.isolates(self.graph)))
+            idxSort = np.argsort(list(self.graph.nodes))
+            relabelMapping = {list(self.graph.nodes)[i]:idxSort[i] for i in range(idxSort.shape[0])}
+            self.graph = nx.relabel_nodes(self.graph, relabelMapping)
+            
+        else:
+            relabelMapping = np.arange(self.n)
+
         # remove the corresponding conductance
-        self.conductances = np.delete(self.conductances, index_edge)
+        self.conductances = np.delete(self.conductances, index_edges)
 
-
+        return relabelMapping
         
     '''
 	*****************************************************************************************************

@@ -859,19 +859,31 @@ class CL(Circuit):
 	*****************************************************************************************************
     '''
 
-    def prune_edge(self, edge):
+    def prune_edge(self, edges):
         ''' Prune an edge of the circuit. '''
-        self._remove_edge(edge)
+        nodeRelabelMapping = self._remove_edge(edges)
+
+        self.n = self.graph.number_of_nodes()
+        self.ne = self.graph.number_of_edges()
+        self.pts = np.array([self.graph.nodes[node]['pos'] for node in self.graph.nodes])
+
         # reset the incidence matrix
         self.incidence_matrix = nx.incidence_matrix(self.graph, oriented=True)
         if jax:
             self.incidence_matrix = jnp.array(self.incidence_matrix.todense())
 
+        relabelSources = np.array([nodeRelabelMapping[source] for source in self.indices_source])
+        
+        if self.target_type=='edge':
+            relabelTargets = np.array([[nodeRelabelMapping[target] for target in target_edge] for target_edge in self.indices_target])
+        elif self.target_type=='node':
+            relabelTargets = np.array([nodeRelabelMapping[target] for target in self.indices_target])
+        
         # reset the task
         if jax:
-            self.jax_set_task(self.indices_source, self.inputs_source, self.indices_target, self.outputs_target, self.target_type)
+            self.jax_set_task(relabelSources, self.inputs_source, relabelTargets, self.outputs_target, self.target_type)
         else:
-            self.set_task(self.indices_source, self.inputs_source, self.indices_target, self.outputs_target, self.target_type)
+            self.set_task(relabelSources, self.inputs_source, relabelTargets, self.outputs_target, self.target_type)
 
     def prune_edge_bunch(self, edge):
         ''' Prune an edge of the circuit. '''
