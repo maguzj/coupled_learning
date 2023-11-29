@@ -108,6 +108,8 @@ def localize(pos_x, pos_y, basis, step_size, n_epochs, n_steps_per_epoch, with_n
     """
     if pbar:
             epochs = tqdm(range(n_epochs))
+    else:
+            epochs = range(n_epochs)
 
     spread_history = []
     end_epoch = np.arange(1,n_epochs+1) * n_steps_per_epoch
