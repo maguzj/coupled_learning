@@ -179,3 +179,5 @@ parameters.csv
 mathematica/
 *.csv
 *.json
+coupled_learning/example-network_global.json
+coupled_learning/example-training.ipynb
