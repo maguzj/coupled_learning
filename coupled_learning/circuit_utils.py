@@ -12,9 +12,11 @@ from scipy.linalg import solve as scipy_solve
 import itertools
 from  matplotlib.collections import LineCollection
 from matplotlib.collections import EllipseCollection
+from matplotlib.collections import PolyCollection
 import matplotlib.patheffects as path_effects
-import matplotlib.tri as tri
+# import matplotlib.tri as tri
 from jax import jit
+from voronoi_utils import get_voronoi_polygons
 
 class Circuit(object):
     ''' Class to simulate a circuit with trainable conductances 
@@ -626,7 +628,7 @@ class Circuit(object):
         if filename:
             fig.savefig(filename, dpi = 300)
 
-    def edge_state_to_ax(self, ax, edge_state, vmin, vmax, cmap = 'YlOrBr', lw = 1, annotate = False):
+    def edge_state_to_ax(self, ax, edge_state, vmin, vmax, cmap = 'YlOrBr', lw = 1,  autoscale = True, annotate = False):
         '''
         Plot the state of the edges in the graph.
 
@@ -639,14 +641,16 @@ class Circuit(object):
         vmin : float
             Minimum value of the colormap.
         vmax : float
-            Maximum value of the colormap.
+            Maximum value of the colormap.  
         cmap : str, optional
             Colormap. The default is 'YlOrBr'.
         lw : float, optional
-            Linewidth. The default is 1.
+            Line width. The default is 1.
+        autoscale : bool, optional
+            If True, the axes are autoscaled. The default is True.
         annotate : bool, optional
             If True, the edges are annotated with their index. The default is False.
-
+        
         Returns
         -------
         plt.cm.ScalarMappable
@@ -665,9 +669,12 @@ class Circuit(object):
                 ax.annotate(str(i), (np.mean(pos_edges[i][:,0]), np.mean(pos_edges[i][:,1])), fontsize = 2*lw, color = 'black', ha = 'center', va = 'center', zorder = 3, path_effects=[path_effects.withStroke(linewidth=2*lw,
                                                         foreground="w")])
 
+        if autoscale:
+            ax.autoscale()
+
         return plt.cm.ScalarMappable(norm=norm, cmap=cmap)
 
-    def node_state_to_ax(self, ax, node_state, vmin, vmax, cmap = 'viridis', plot_mode = 'collection', radius = 0.1, zorder = 2, annotate = False):
+    def node_state_to_ax(self, ax, node_state, vmin, vmax, cmap = 'viridis', plot_mode = 'ellipses', radius = 0.1, zorder = 2, autoscale = True,annotate = False):
         ''' Plot the state of the nodes in the graph.
 
         Parameters
@@ -677,17 +684,19 @@ class Circuit(object):
         node_state : np.array
             State of the nodes in the graph. node_state has size n.
         vmin : float
-            Minimum value of the colormap.
+            Minimum value of the colormap.  
         vmax : float
-            Maximum value of the colormap.
+            Maximum value of the colormap.  
         cmap : str, optional
-            Colormap. The default is 'RdYlBu_r'.
+            Colormap. The default is 'viridis'.
         plot_mode : str, optional
-            If 'collection', the nodes are plotted as a collection plot. If 'triangulation', the nodes are plotted as a triangulation. The default is 'collection'.
+            Plot mode. Either 'ellipses' or 'voronoi'. The default is 'ellipses'.
         radius : float, optional
-            Radius of the nodes. The default is 0.1.
+            Radius of the ellipses or the circles. The default is 0.1.
         zorder : int, optional
-            Zorder of the nodes. The default is 2.
+            zorder of the ellipses or the circles. The default is 2.
+        autoscale : bool, optional
+            If True, the axes are autoscaled. The default is True.
         annotate : bool, optional
             If True, the nodes are annotated with their index. The default is False.
 
@@ -696,27 +705,45 @@ class Circuit(object):
         plt.cm.ScalarMappable
             ScalarMappable object that can be used to add a colorbar to the plot.
         '''
-        posX = self.pts[:,0]
-        posY = self.pts[:,1]
         norm = plt.Normalize(vmin=vmin, vmax=vmax)
+        color_array = plt.cm.get_cmap(cmap)(norm(node_state))
 
-        if plot_mode == 'collection':
+        if plot_mode == 'ellipses':
             # create a collection of ellipses
-            color_array = plt.cm.get_cmap(cmap)(norm(node_state))
             r = np.ones(self.n)*radius
             ec = EllipseCollection(r, r, np.zeros(self.n), color = color_array, linewidths = 1,offsets=self.pts,
                        offset_transform=ax.transData, zorder=zorder)
             ax.add_collection(ec)
+
+            if autoscale:
+                ax.autoscale()
             
 
             
-        elif plot_mode == 'triangulation':
-            triang = tri.Triangulation(posX, posY)
-            ax.tricontourf(triang, node_state, cmap = cmap, norm = norm, levels = 100)
+        elif plot_mode == 'voronoi':
+            # find the extreme points of the graph
+            minX = np.min(self.pts[:,0])
+            maxX = np.max(self.pts[:,0])
+            minY = np.min(self.pts[:,1])
+            maxY = np.max(self.pts[:,1])
+            # plot them in a scatter plot
+            ax.scatter(self.pts[:,0], self.pts[:,1], s = 0)
+            # Autoscale before the polygons are plotted
+            if autoscale:
+                ax.autoscale()
+
+            # create a collection of polygons
+            polygons = get_voronoi_polygons(self.pts)
+            pc = PolyCollection(polygons, color = color_array, linewidths = 1, zorder=zorder)
+            ax.add_collection(pc)
 
         if annotate:
+            posX = self.pts[:,0]
+            posY = self.pts[:,1]
             for i in range(self.n):
                 ax.annotate(str(i), (posX[i], posY[i]), fontsize = 0.8*radius, color = 'black', ha = 'center', va = 'center', zorder = 3)
+            
+        
 
         # return the colorbar
         return plt.cm.ScalarMappable(norm=norm, cmap=cmap)
