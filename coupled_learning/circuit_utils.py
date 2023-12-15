@@ -13,6 +13,8 @@ import itertools
 from  matplotlib.collections import LineCollection
 from matplotlib.collections import EllipseCollection
 from matplotlib.collections import PolyCollection
+from matplotlib.patches import FancyArrowPatch
+from matplotlib.collections import PatchCollection
 import matplotlib.patheffects as path_effects
 # import matplotlib.tri as tri
 from jax import jit
@@ -628,7 +630,7 @@ class Circuit(object):
         if filename:
             fig.savefig(filename, dpi = 300)
 
-    def edge_state_to_ax(self, ax, edge_state, vmin, vmax, cmap = 'YlOrBr', lw = 1,  autoscale = True, annotate = False):
+    def edge_state_to_ax(self, ax, edge_state, vmin, vmax, cmap = 'YlOrBr', plot_mode = 'lines', lw = 1, zorder = 2, autoscale = True, annotate = False, alpha = 1, truncate = False, truncate_value = 0.1,shrink_factor = 0.3):
         '''
         Plot the state of the edges in the graph.
 
@@ -644,12 +646,24 @@ class Circuit(object):
             Maximum value of the colormap.  
         cmap : str, optional
             Colormap. The default is 'YlOrBr'.
+        plot_mode : str, optional
+            Plot mode. Either 'lines' or 'arrows'. The default is 'lines'.
         lw : float, optional
             Line width. The default is 1.
+        zorder : int, optional
+            zorder of the edges. The default is 2.
         autoscale : bool, optional
             If True, the axes are autoscaled. The default is True.
         annotate : bool, optional
             If True, the edges are annotated with their index. The default is False.
+        alpha : float, optional
+            Alpha of the edges. The default is 1.
+        truncate : bool, optional
+            If True, only the edges with norm(edge_state) larger than truncate_value are plotted. The default is False.
+        truncate_value : float, optional
+            Value to truncate the edges. The default is 0.1.
+        shrink_factor : float, optional
+            Factor to shrink the arrows in plot_mode='arrows'. The default is 0.3.
         
         Returns
         -------
@@ -660,9 +674,47 @@ class Circuit(object):
         norm = plt.Normalize(vmin=vmin, vmax=vmax)
         # create the line collection object
         pos_edges = [np.array([self.graph.nodes[edge[0]]['pos'], self.graph.nodes[edge[1]]['pos']]) for edge in self.graph.edges()]
-        color_array = _cmap(norm(edge_state))
-        lc = LineCollection(pos_edges, color = color_array, linewidths = lw, path_effects=[path_effects.Stroke(capstyle="round")])
-        ax.add_collection(lc)
+        _edge_state = edge_state
+        _abs_edge_state = np.abs(_edge_state)
+        if truncate:
+            # consider only the edges with norm(edge_state) larger than truncate_value
+            pos_edges = [pos_edges[i] for i in range(len(pos_edges)) if _abs_edge_state[i] > truncate_value]
+            _edge_state = _edge_state[_abs_edge_state > truncate_value]
+        
+        _abs_edge_state = np.abs(_edge_state)
+
+
+        if plot_mode == 'lines':
+            color_array = _cmap(norm(_edge_state))
+            lc = LineCollection(pos_edges, color = color_array, linewidths = lw, path_effects=[path_effects.Stroke(capstyle="round")],zorder=zorder, alpha = alpha)
+            ax.add_collection(lc)
+        elif plot_mode == 'arrows':
+            color_array = _cmap(norm(_abs_edge_state))
+            arrows = []
+            for i in range(len(pos_edges)):
+                start_pos = pos_edges[i][0]
+                end_pos = pos_edges[i][1]
+                mid_point = (start_pos + end_pos)/2
+                start_pos_shrunk = start_pos + shrink_factor*(mid_point - start_pos)
+                end_pos_shrunk = end_pos - shrink_factor*(end_pos - mid_point)
+                start_pos, end_pos = start_pos_shrunk, end_pos_shrunk
+
+                if _edge_state[i] < 0:
+                    start_pos, end_pos = end_pos, start_pos
+
+                arrow = FancyArrowPatch(start_pos, end_pos, 
+                                    arrowstyle='simple,head_length=0.5, head_width=0.7, tail_width=0.2', 
+                                    color=color_array[i], 
+                                    linewidth=lw,
+                                    shrinkA=0,
+                                    shrinkB=0,
+                                    mutation_scale= 0.8,
+                                    path_effects=[path_effects.Stroke(capstyle="round")])
+                arrows.append(arrow)
+            pc = PatchCollection(arrows, match_original=True, zorder=zorder, alpha = alpha)
+            ax.add_collection(pc)
+        else:
+            raise ValueError('plot_mode must be either "lines" or "arrows".')
 
         if annotate:
             for i in range(self.ne):
@@ -717,9 +769,6 @@ class Circuit(object):
 
             if autoscale:
                 ax.autoscale()
-            
-
-            
         elif plot_mode == 'voronoi':
             # find the extreme points of the graph
             minX = np.min(self.pts[:,0])
@@ -736,6 +785,8 @@ class Circuit(object):
             polygons = get_voronoi_polygons(self.pts)
             pc = PolyCollection(polygons, color = color_array, linewidths = 1, zorder=zorder)
             ax.add_collection(pc)
+        else:
+            raise ValueError('plot_mode must be either "ellipses" or "voronoi".')
 
         if annotate:
             posX = self.pts[:,0]
