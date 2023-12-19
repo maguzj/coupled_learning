@@ -679,16 +679,6 @@ class Circuit(object):
             ScalarMappable object that can be used to add a colorbar to the plot.
         '''
         _cmap = plt.cm.get_cmap(cmap)
-        if vmin is None:
-            vmin = np.min(edge_state)
-        if vmax is None:
-            vmax = np.max(edge_state)
-        if color_scale == 'linear':
-            norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
-        elif color_scale == 'log':
-            norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
-        else:
-            raise ValueError('color_scale must be either "linear" or "log".')
         # create the line collection object
         pos_edges = [np.array([self.graph.nodes[edge[0]]['pos'], self.graph.nodes[edge[1]]['pos']]) for edge in self.graph.edges()]
         _edge_state = edge_state
@@ -697,15 +687,34 @@ class Circuit(object):
             # consider only the edges with norm(edge_state) larger than truncate_value
             pos_edges = [pos_edges[i] for i in range(len(pos_edges)) if _abs_edge_state[i] > truncate_value]
             _edge_state = _edge_state[_abs_edge_state > truncate_value]
-        
-        _abs_edge_state = np.abs(_edge_state)
+            _abs_edge_state = np.abs(_edge_state)
 
 
         if plot_mode == 'lines':
+            if vmin is None:
+                vmin = np.min(edge_state)
+            if vmax is None:
+                vmax = np.max(edge_state)
+            if color_scale == 'linear':
+                norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
+            elif color_scale == 'log':
+                norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
+            else:
+                raise ValueError('color_scale must be either "linear" or "log".')
             color_array = _cmap(norm(_edge_state))
             lc = LineCollection(pos_edges, color = color_array, linewidths = lw, path_effects=[path_effects.Stroke(capstyle="round")],zorder=zorder, alpha = alpha)
             ax.add_collection(lc)
         elif plot_mode == 'arrows':
+            if vmin is None:
+                vmin = np.min(np.abs(edge_state))
+            if vmax is None:
+                vmax = np.max(np.abs(edge_state))
+            if color_scale == 'linear':
+                norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
+            elif color_scale == 'log':
+                norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
+            else:
+                raise ValueError('color_scale must be either "linear" or "log".')
             color_array = _cmap(norm(_abs_edge_state))
             arrows = []
             for i in range(len(pos_edges)):
@@ -827,4 +836,3 @@ class Circuit(object):
 
         # return the colorbar
         return plt.cm.ScalarMappable(norm=norm, cmap=cmap)
- 
