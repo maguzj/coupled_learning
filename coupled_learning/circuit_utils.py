@@ -5,6 +5,7 @@ from scipy.sparse import csr_matrix
 from scipy.sparse import bmat
 from scipy.sparse.linalg import spsolve
 import matplotlib.pyplot as plt
+import matplotlib.colors as mplcolors
 import copy
 import jax
 import jax.numpy as jnp
@@ -19,6 +20,7 @@ import matplotlib.patheffects as path_effects
 # import matplotlib.tri as tri
 from jax import jit
 from voronoi_utils import get_voronoi_polygons
+import cmocean
 
 class Circuit(object):
     ''' Class to simulate a circuit with trainable conductances 
@@ -568,7 +570,7 @@ class Circuit(object):
         '''
         posX = self.pts[:,0]
         posY = self.pts[:,1]
-        norm = plt.Normalize(vmin=np.min(node_state), vmax=np.max(node_state))
+        norm = mpl.colors.Normalize(vmin=np.min(node_state), vmax=np.max(node_state))
         if prop:
             size = size_factor*np.abs(node_state[:])
         else:   
@@ -596,6 +598,8 @@ class Circuit(object):
             axs.set_title(title)
             if filename is not None:
                 fig.savefig(filename, dpi = 300, bbox_inches='tight')
+
+        print('Warning: this function is going to be deprecated. Use node_state_to_ax instead.')
 
     def plot_edge_state(self, edge_state, title = None,lw = 0.5, cmap = 'YlOrBr', figsize = (4,4), minmax = None, filename = None, background_color = '0.75'):
         ''' Plot the state of the edges in the graph.
@@ -629,8 +633,10 @@ class Circuit(object):
         axs.set_title(title)
         if filename:
             fig.savefig(filename, dpi = 300)
+        
+        print('Warning: this function is going to be deprecated. Use edge_state_to_ax instead.')
 
-    def edge_state_to_ax(self, ax, edge_state, vmin, vmax, cmap = 'YlOrBr', plot_mode = 'lines', lw = 1, zorder = 2, autoscale = True, annotate = False, alpha = 1, truncate = False, truncate_value = 0.1,shrink_factor = 0.3):
+    def edge_state_to_ax(self, ax, edge_state, vmin = None, vmax = None, cmap = cmocean.cm.matter, plot_mode = 'lines', lw = 1, zorder = 2, autoscale = True, annotate = False, alpha = 1, truncate = False, truncate_value = 0.1,shrink_factor = 0.3, color_scale = 'linear'):
         '''
         Plot the state of the edges in the graph.
 
@@ -640,10 +646,10 @@ class Circuit(object):
             Axes object where the plot will be drawn.
         edge_state : np.array
             State of the edges in the graph. edge_state has size ne.
-        vmin : float
-            Minimum value of the colormap.
-        vmax : float
-            Maximum value of the colormap.  
+        vmin : float or None, optional
+            Minimum value of the colormap. If None, vmin is set to the minimum value of edge_state. The default is None.
+        vmax : float or None, optional
+            Maximum value of the colormap. If None, vmax is set to the maximum value of edge_state. The default is None.
         cmap : str, optional
             Colormap. The default is 'YlOrBr'.
         plot_mode : str, optional
@@ -664,6 +670,8 @@ class Circuit(object):
             Value to truncate the edges. The default is 0.1.
         shrink_factor : float, optional
             Factor to shrink the arrows in plot_mode='arrows'. The default is 0.3.
+        color_scale : str, optional
+            Scale of the colormap. Either 'linear' or 'log'. The default is 'linear'.
         
         Returns
         -------
@@ -671,7 +679,16 @@ class Circuit(object):
             ScalarMappable object that can be used to add a colorbar to the plot.
         '''
         _cmap = plt.cm.get_cmap(cmap)
-        norm = plt.Normalize(vmin=vmin, vmax=vmax)
+        if vmin is None:
+            vmin = np.min(edge_state)
+        if vmax is None:
+            vmax = np.max(edge_state)
+        if color_scale == 'linear':
+            norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
+        elif color_scale == 'log':
+            norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
+        else:
+            raise ValueError('color_scale must be either "linear" or "log".')
         # create the line collection object
         pos_edges = [np.array([self.graph.nodes[edge[0]]['pos'], self.graph.nodes[edge[1]]['pos']]) for edge in self.graph.edges()]
         _edge_state = edge_state
@@ -726,7 +743,7 @@ class Circuit(object):
 
         return plt.cm.ScalarMappable(norm=norm, cmap=cmap)
 
-    def node_state_to_ax(self, ax, node_state, vmin, vmax, cmap = 'viridis', plot_mode = 'ellipses', radius = 0.1, zorder = 2, autoscale = True,annotate = False):
+    def node_state_to_ax(self, ax, node_state, vmin = None, vmax = None, cmap = 'coolwarm', plot_mode = 'ellipses', radius = 0.1, zorder = 2, autoscale = True,annotate = False, color_scale = 'linear'):
         ''' Plot the state of the nodes in the graph.
 
         Parameters
@@ -735,10 +752,10 @@ class Circuit(object):
             Axes object where the plot will be drawn.
         node_state : np.array
             State of the nodes in the graph. node_state has size n.
-        vmin : float
-            Minimum value of the colormap.  
-        vmax : float
-            Maximum value of the colormap.  
+        vmin : float or None, optional
+            Minimum value of the colormap. If None, vmin is set to the minimum value of node_state. The default is None.
+        vmax : float or None, optional
+            Maximum value of the colormap. If None, vmax is set to the maximum value of node_state. The default is None.
         cmap : str, optional
             Colormap. The default is 'viridis'.
         plot_mode : str, optional
@@ -751,13 +768,25 @@ class Circuit(object):
             If True, the axes are autoscaled. The default is True.
         annotate : bool, optional
             If True, the nodes are annotated with their index. The default is False.
+        color_scale : str, optional
+            Scale of the colormap. Either 'linear' or 'log'. The default is 'linear'.
 
         Returns
         -------
         plt.cm.ScalarMappable
             ScalarMappable object that can be used to add a colorbar to the plot.
         '''
-        norm = plt.Normalize(vmin=vmin, vmax=vmax)
+        if vmin is None:
+            vmin = np.min(edge_state)
+        if vmax is None:
+            vmax = np.max(edge_state)
+        if color_scale == 'linear':
+            norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
+        elif color_scale == 'log':
+            norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
+        else:
+            raise ValueError('color_scale must be either "linear" or "log".')
+        
         color_array = plt.cm.get_cmap(cmap)(norm(node_state))
 
         if plot_mode == 'ellipses':
