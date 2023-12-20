@@ -220,6 +220,38 @@ class CL(Circuit):
             self.Q_clamped = jnp.concatenate([self.Q_free,q_edge], axis=1)
 
         return self.Q_free, self.Q_clamped
+
+    def set_task_regression(self, indices_source, indices_target, target_type='regression'):
+        ''' Set the task of the circuit for regression.
+
+        Parameters
+        ----------
+        indices_source : np.array
+            Indices of the nodes of the source.
+        indices_target : np.array
+            If target is node, indices of the nodes of the target.
+            If target is edge, array with edge index, and nodes i, j. 
+        target_type : string
+            target type, "regression"
+        
+        Returns
+        -------
+        Q_free : scipy.sparse.csr_matrix
+            Constraint matrix Q_free: a sparse constraint rectangular matrix of size n x len(indices_source). Its entries are only 1 or 0.
+        Q_clamped : scipy.sparse.csr_matrix
+            Constraint matrix Q_clamped: a sparse constraint rectangular matrix of size n x (len(indices_source) + len(indices_target)). Its entries are only 1 or 0.
+        '''
+        self.target_type = target_type
+        self.indices_source = indices_source
+        self.indices_target = indices_target
+        # Compute the constraint matrices
+        self.Q_free = self.constraint_matrix(self.indices_source)
+        if self.target_type == 'regression':
+            self.Q_clamped = self.constraint_matrix(np.concatenate((self.indices_source, self.indices_target)))    
+        else:
+            raise Exception('target_type must be "regression"')
+
+        return self.Q_free, self.Q_clamped
     
     def get_free_state(self):
         ''' Return the free state of the circuit for the current task. '''
