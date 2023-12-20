@@ -29,7 +29,7 @@ class CL(Circuit):
     pts : np.array
         Positions of the nodes.
     '''
-    def __init__(self, graph, conductances, learning_rate=1.0, learning_step = 0, min_k = 1.e-6, max_k = 1.e6, name = 'CL', jax = False, losses = None, end_epoch = None, power = None, energy = None):
+    def __init__(self,graph, conductances, learning_rate=1.0, learning_step = 0, min_k = 1.e-6, max_k = 1.e6, name = 'CL', jax = False, losses = None, end_epoch = None, power = None, energy = None, best_conductances = None, best_error = None):
         ''' Initialize the coupled learning circuit.
 
         Parameters
@@ -70,6 +70,14 @@ class CL(Circuit):
             self.energy = energy
             self.current_energy = energy[-1]
         self.name = name
+        if best_conductances is None:
+            self.best_conductances = self.conductances
+        else:
+            self.best_conductances = best_conductances
+        if best_error is None:
+            self.best_error = np.inf
+        else:
+            self.best_error = best_error
     
     def set_name(self, name):
         ''' Set the name of the learning circuit.
@@ -468,6 +476,9 @@ class CL(Circuit):
         if save_global:
             self.save_global(save_path+'_global.json')
             self.save_graph(save_path+'_graph.json')
+        
+        # print warning: function deprecated
+        print("This function is deprecated. Use train_CL instead.")
         return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
 
     @staticmethod
@@ -559,7 +570,11 @@ class CL(Circuit):
             # initial state
             if self.learning_step == 0:
                 self.end_epoch.append(self.learning_step)
-                self.losses.append(CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type))
+                loss = CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type)
+                if loss < self.best_error:
+                    self.best_error = loss
+                    self.best_conductances = self.conductances
+                self.losses.append(loss)
                 if save_state:
                     self.save_local(save_path+'.csv')
             else: #to avoid double counting the initial state
@@ -575,7 +590,11 @@ class CL(Circuit):
                 if log_spaced:
                     actual_steps_per_epoch = n_steps_per_epoch[epoch]
                 conductances = self._siterate_CL(actual_steps_per_epoch, eta, self.target_type)
-                self.losses.append(CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type))
+                loss = CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type)
+                if loss < self.best_error:
+                    self.best_error = loss
+                    self.best_conductances = self.conductances
+                self.losses.append(loss)
                 self.power.append(self.current_power)
                 self.energy.append(self.current_energy)
                 if verbose:
@@ -602,7 +621,11 @@ class CL(Circuit):
             # initial state
             if self.learning_step == 0:
                 self.end_epoch.append(self.learning_step)
-                self.losses.append(self.MSE_loss(self.get_free_state()))
+                loss = self.MSE_loss(self.get_free_state())
+                if loss < self.best_error:
+                    self.best_error = loss
+                    self.best_conductances = self.conductances
+                self.losses.append(loss)
                 if save_state:
                     self.save_local(save_path+'.csv')
             else: #to avoid double counting the initial state
@@ -618,7 +641,11 @@ class CL(Circuit):
                 if log_spaced:
                     actual_steps_per_epoch = n_steps_per_epoch[epoch]
                 free_state, voltage_drop_free , delta_conductances , conductances = self.iterate_CL(actual_steps_per_epoch, eta)
-                self.losses.append(self.MSE_loss(free_state))
+                loss = self.MSE_loss(free_state)
+                if loss < self.best_error:
+                    self.best_error = loss
+                    self.best_conductances = self.conductances
+                self.losses.append(loss)
                 self.power.append(self.current_power)
                 self.energy.append(self.current_energy)
                 if verbose:
@@ -714,7 +741,11 @@ class CL(Circuit):
         # initial state
         if self.learning_step == 0:
             self.end_epoch.append(self.learning_step)
-            self.losses.append(CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type))
+            loss = CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type)
+            if loss < self.best_error:
+                self.best_error = loss
+                self.best_conductances = self.conductances
+            self.losses.append(loss)
             if save_state:
                 self.save_local(save_path+'.csv')
         else: #to avoid double counting the initial state
@@ -730,7 +761,11 @@ class CL(Circuit):
             if log_spaced:
                 actual_steps_per_epoch = n_steps_per_epoch[epoch]
             conductances = self._siterate_GD(actual_steps_per_epoch, self.target_type)
-            self.losses.append(CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type))
+            loss = CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type)
+            if loss < self.best_error:
+                self.best_error = loss
+                self.best_conductances = self.conductances
+            self.losses.append(loss)
             self.power.append(self.current_power)
             self.energy.append(self.current_energy)
             if verbose:
@@ -930,6 +965,20 @@ class CL(Circuit):
             "power": powers,
             "end_epoch": self.end_epoch
         }
+
+        # Handle best_conductances (new attribute) to be back compatible
+        if hasattr(self, 'best_conductances'):
+            if self.jax:
+                best_conductances = jax.device_get(jnp.array(self.best_conductances)).astype(float).tolist()
+            else:
+                best_conductances = np.array(self.best_conductances).astype(float).tolist()
+        else:
+            best_conductances = None
+        dic['best_conductances'] = best_conductances
+        # Handle best_error (new attribute) to be back compatible
+        if not hasattr(self, 'best_error'):
+            best_error = None
+        dic['best_error'] = self.best_error
         # save the dictionary in JSON format
         with open(path, 'w') as f:
             json.dump(dic, f)
@@ -1138,7 +1187,17 @@ def CL_from_file(jsonfile_global, jsonfile_graph, csv_local=None, new_train=Fals
         indices_target = jnp.array(indices_target)
         outputs_target = jnp.array(outputs_target)
 
-    allo = CL(graph, conductances, learning_rate, learning_step, min_k, max_k, name, jax, losses, end_epoch, power = powers, energy = energies)
+    # handle best_conductances (new attribute) to be back compatible
+    best_conductances = data_global.get('best_conductances')
+    if best_conductances is not None:
+        if jax:
+            best_conductances = jnp.array(best_conductances)
+        else:
+            best_conductances = np.array(best_conductances)
+    # handle best_error (new attribute) to be back compatible
+    best_error = data_global.get('best_error')
+
+    allo = CL(graph, conductances, learning_rate, learning_step, min_k, max_k, name, jax, losses, end_epoch, power = powers, energy = energies, best_conductances = best_conductances, best_error = best_error)
     if jax:
         allo.jax_set_task(indices_source, inputs_source, indices_target, outputs_target, target_type)
     else:
