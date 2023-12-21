@@ -258,6 +258,26 @@ class Circuit(object):
 	*****************************************************************************************************
 	'''
 
+    def _solve_from_extended_H(self, H_extended, f):
+        ''' Solve the system with the extended Hessian and the source vector f.
+
+        Parameters
+        ----------
+        H_extended : scipy.sparse.csr_matrix
+            Extended Hessian
+        f : np.array
+            Source vector f. f has size n + len(indices_nodes).
+
+        Returns
+        -------
+        x : np.array
+            Solution vector V. V has size n + len(indices_nodes).
+        '''
+        f_extended = np.hstack([np.zeros(self.n), f])
+        V = spsolve(H_extended, f_extended)
+        return V
+
+
     def solve(self, Q, f):
         ''' Solve the circuit with the constraint matrix Q and the source vector f.
 
