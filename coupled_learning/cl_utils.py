@@ -156,7 +156,7 @@ class CL(Circuit):
             Inputs of the source.
         indices_target : np.array
             If target is node, indices of the nodes of the target.
-            If target is edge, array with edge index, and nodes i, j. 
+            If target is edge, array with edge index, and nodes i, j. The voltage drop goes from i to j.
         outputs_target : np.array
             Outputs of the target.
         target_type : string
@@ -1219,10 +1219,10 @@ class CL(Circuit):
         dic['best_error'] = self.best_error
 
         if hasattr(self, 'inputs_source'):
-            dic['inputs_source'] = inputs_source
+            dic['inputs_source'] = self.inputs_source.tolist()
         
         if hasattr(self, 'outputs_target'):
-            dic['outputs_target'] = outputs_target
+            dic['outputs_target'] = self.outputs_target.tolist()
         if hasattr(self, 'task_type'):
             dic['task_type'] = self.task_type
         
