@@ -227,7 +227,7 @@ class CL(Circuit):
 
         return self.Q_free, self.Q_clamped
 
-    def set_task_regression(self, indices_source, indices_target, target_type='node', task_type = 'regression'):
+    def set_task_regression(self, indices_source, indices_target, target_type='node', task_type = 'regression', matrix = None):
         ''' Set the task of the circuit for regression.
 
         Parameters
@@ -260,8 +260,21 @@ class CL(Circuit):
         elif self.target_type == 'edge':
             q_edge = self.constraint_matrix(indices_target, restrictionType='edge')
             self.Q_clamped = hstack([self.Q_free, q_edge])
+        
+        if matrix is not None:
+            self.set_regression_matrix(matrix)
 
         return self.Q_free, self.Q_clamped
+    
+    def set_regression_matrix(self, matrix):
+        ''' Set the matrix for regression.
+
+        Parameters
+        ----------
+        matrix : np.array
+            Matrix for regression.
+        '''
+        self.outputs_target = matrix
     
     def get_free_state(self, inputs_source = None):
         ''' Return the free state of the circuit for the current task. '''
@@ -511,6 +524,10 @@ class CL(Circuit):
             n_steps_per_epoch = log_partition(n_steps, n_epochs)
         else:
             actual_steps_per_epoch = n_steps_per_epoch
+
+        if not hasattr(self, 'outputs_target'):
+            print("Warning: the regression matrix has not been set as an attribute. You may forget the specific regression task when reading from a file.\n You can use self.set_regression_matrix(matrix).")
+
 
         if self.jax: # Dense and JIT training (gpu)
             # abort, not implemented
@@ -1478,6 +1495,7 @@ def CL_from_file(jsonfile_global, jsonfile_graph, csv_local=None, new_train=Fals
                 pass
                 #allo.jax_set_task_regression(indices_source, inputs_source, indices_target, outputs_target, target_type)
             else:
+                allo.set_regression_matrix(outputs_target)
                 allo.set_task_regression(indices_source, indices_target, target_type, task_type)
         else:
             raise Exception('task_type must be "allostery" or "regression"')
