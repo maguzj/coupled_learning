@@ -355,36 +355,65 @@ class CL(Circuit):
         free_state = Circuit.ssolve(conductances, incidence_matrix, Q, inputs_source)
         freeState_DV = free_state[indices_target[:,0]] - free_state[indices_target[:,1]]
         return 0.5*jnp.mean((freeState_DV - outputs_target)**2)
+
+    @staticmethod
+    @jit
+    def MSE_REGRESSION(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target):
+        ''' Compute the MSE loss for regression'''
+        free_state = Circuit.ssolve(conductances, incidence_matrix, Q, inputs_source)
+        return 0.5*jnp.mean((free_state[indices_target] - outputs_target.dot(inputs_source))**2)
     
     @staticmethod
-    def MSE(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target, target_type):
-        ''' Compute the MSE loss for Node Allostery or Edge Allostery'''
-        if target_type == 'node':
-            return CL.MSE_NA(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
-        elif target_type == 'edge':
-            return CL.MSE_EA(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
-        else:
-            raise Exception('target_type must be "node" or "edge"' )
+    def MSE(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target, target_type, task_type = 'allostery'):
+        ''' Compute the MSE loss for Node Allostery, Edge Allostery, or Linear Regression.'''
+        if task_type == 'allostery':
+            if target_type == 'node':
+                return CL.MSE_NA(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
+            elif target_type == 'edge':
+                return CL.MSE_EA(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
+            else:
+                raise Exception('target_type must be "node" or "edge"' )
+        elif task_type == 'regression':
+            if target_type == 'node':
+                return CL.MSE_REGRESSION(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
+            else:
+                raise Exception('target_type must be "node" for regression' )
 
     @staticmethod
-    def gradient_MSE(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target, target_type):
-        if target_type == 'node':
-            grad_func = jax.grad(CL.MSE_NA, argnums=0)
-        elif target_type == 'edge':
-            grad_func = jax.grad(CL.MSE_EA, argnums=0)
-        else:
-            raise ValueError('target_type must be "node" or "edge"')
-        return grad_func(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
+    def gradient_MSE(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target, target_type, task_type = 'allostery'):
+        ''' Compute the gradient of the MSE loss for Node Allostery, Edge Allostery, or Linear Regression.'''
+        if task_type == 'allostery':
+            if target_type == 'node':
+                grad_func = jax.grad(CL.MSE_NA, argnums=0)
+            elif target_type == 'edge':
+                grad_func = jax.grad(CL.MSE_EA, argnums=0)
+            else:
+                raise ValueError('target_type must be "node" or "edge"')
+            return grad_func(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
+        elif task_type == 'regression':
+            if target_type == 'node':
+                grad_func = jax.grad(CL.MSE_REGRESSION, argnums=0)
+            else:
+                raise ValueError('target_type must be "node" for regression')
+            return grad_func(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
 
     @staticmethod
-    def hessian_MSE(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target, target_type):
-        if target_type == 'node':
-            hessian_func = jax.hessian(CL.MSE_NA, argnums=0)
-        elif target_type == 'edge':
-            hessian_func = jax.hessian(CL.MSE_EA, argnums=0)
-        else:
-            raise ValueError('target_type must be "node" or "edge"')
-        return hessian_func(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
+    def hessian_MSE(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target, target_type, task_type = 'allostery'):
+        ''' Compute the hessian of the MSE loss for Node Allostery, Edge Allostery, or Linear Regression.'''
+        if task_type == 'allostery':
+            if target_type == 'node':
+                hessian_func = jax.hessian(CL.MSE_NA, argnums=0)
+            elif target_type == 'edge':
+                hessian_func = jax.hessian(CL.MSE_EA, argnums=0)
+            else:
+                raise ValueError('target_type must be "node" or "edge"')
+            return hessian_func(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
+        elif task_type == 'regression':
+            if target_type == 'node':
+                hessian_func = jax.hessian(CL.MSE_REGRESSION, argnums=0)
+            else:
+                raise ValueError('target_type must be "node" for regression')
+            return hessian_func(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
 
 
     def jaxify(self):
