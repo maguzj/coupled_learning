@@ -590,7 +590,7 @@ class Circuit(object):
         '''
         posX = self.pts[:,0]
         posY = self.pts[:,1]
-        norm = mpl.colors.Normalize(vmin=np.min(node_state), vmax=np.max(node_state))
+        norm = mplcolors.Normalize(vmin=np.min(node_state), vmax=np.max(node_state))
         if prop:
             size = size_factor*np.abs(node_state[:])
         else:   
