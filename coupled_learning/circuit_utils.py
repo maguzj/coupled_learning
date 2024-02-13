@@ -5,6 +5,7 @@ from scipy.sparse import csr_matrix
 from scipy.sparse import bmat
 from scipy.sparse.linalg import spsolve
 import matplotlib.pyplot as plt
+import matplotlib.colors as mplcolors
 import copy
 import jax
 import jax.numpy as jnp
@@ -12,9 +13,14 @@ from scipy.linalg import solve as scipy_solve
 import itertools
 from  matplotlib.collections import LineCollection
 from matplotlib.collections import EllipseCollection
+from matplotlib.collections import PolyCollection
+from matplotlib.patches import FancyArrowPatch
+from matplotlib.collections import PatchCollection
 import matplotlib.patheffects as path_effects
-import matplotlib.tri as tri
+# import matplotlib.tri as tri
 from jax import jit
+from voronoi_utils import get_voronoi_polygons
+import cmocean
 
 class Circuit(object):
     ''' Class to simulate a circuit with trainable conductances 
@@ -251,6 +257,26 @@ class Circuit(object):
 	*****************************************************************************************************
 	*****************************************************************************************************
 	'''
+
+    def _solve_from_extended_H(self, H_extended, f):
+        ''' Solve the system with the extended Hessian and the source vector f.
+
+        Parameters
+        ----------
+        H_extended : scipy.sparse.csr_matrix
+            Extended Hessian
+        f : np.array
+            Source vector f. f has size n + len(indices_nodes).
+
+        Returns
+        -------
+        x : np.array
+            Solution vector V. V has size n + len(indices_nodes).
+        '''
+        f_extended = np.hstack([np.zeros(self.n), f])
+        V = spsolve(H_extended, f_extended)
+        return V
+
 
     def solve(self, Q, f):
         ''' Solve the circuit with the constraint matrix Q and the source vector f.
@@ -564,7 +590,7 @@ class Circuit(object):
         '''
         posX = self.pts[:,0]
         posY = self.pts[:,1]
-        norm = plt.Normalize(vmin=np.min(node_state), vmax=np.max(node_state))
+        norm = mpl.colors.Normalize(vmin=np.min(node_state), vmax=np.max(node_state))
         if prop:
             size = size_factor*np.abs(node_state[:])
         else:   
@@ -592,6 +618,8 @@ class Circuit(object):
             axs.set_title(title)
             if filename is not None:
                 fig.savefig(filename, dpi = 300, bbox_inches='tight')
+
+        print('Warning: this function is going to be deprecated. Use node_state_to_ax instead.')
 
     def plot_edge_state(self, edge_state, title = None,lw = 0.5, cmap = 'YlOrBr', figsize = (4,4), minmax = None, filename = None, background_color = '0.75'):
         ''' Plot the state of the edges in the graph.
@@ -625,8 +653,10 @@ class Circuit(object):
         axs.set_title(title)
         if filename:
             fig.savefig(filename, dpi = 300)
+        
+        print('Warning: this function is going to be deprecated. Use edge_state_to_ax instead.')
 
-    def edge_state_to_ax(self, ax, edge_state, vmin, vmax, cmap = 'YlOrBr', lw = 1, annotate = False):
+    def edge_state_to_ax(self, ax, edge_state, vmin = None, vmax = None, cmap = cmocean.cm.matter, plot_mode = 'lines', lw = 1, zorder = 2, autoscale = True, annotate = False, alpha = 1, truncate = False, truncate_value = 0.1,shrink_factor = 0.3, color_scale = 'linear', mask = None, mask_value = 0):
         '''
         Plot the state of the edges in the graph.
 
@@ -636,38 +666,119 @@ class Circuit(object):
             Axes object where the plot will be drawn.
         edge_state : np.array
             State of the edges in the graph. edge_state has size ne.
-        vmin : float
-            Minimum value of the colormap.
-        vmax : float
-            Maximum value of the colormap.
+        vmin : float or None, optional
+            Minimum value of the colormap. If None, vmin is set to the minimum value of edge_state. The default is None.
+        vmax : float or None, optional
+            Maximum value of the colormap. If None, vmax is set to the maximum value of edge_state. The default is None.
         cmap : str, optional
             Colormap. The default is 'YlOrBr'.
+        plot_mode : str, optional
+            Plot mode. Either 'lines' or 'arrows'. The default is 'lines'.
         lw : float, optional
-            Linewidth. The default is 1.
+            Line width. The default is 1.
+        zorder : int, optional
+            zorder of the edges. The default is 2.
+        autoscale : bool, optional
+            If True, the axes are autoscaled. The default is True.
         annotate : bool, optional
             If True, the edges are annotated with their index. The default is False.
-
+        alpha : float, optional
+            Alpha of the edges. The default is 1.
+        truncate : bool, optional
+            If True, only the edges with norm(edge_state) larger than truncate_value are plotted. The default is False.
+        truncate_value : float, optional
+            Value to truncate the edges. The default is 0.1.
+        shrink_factor : float, optional
+            Factor to shrink the arrows in plot_mode='arrows'. The default is 0.3.
+        color_scale : str, optional
+            Scale of the colormap. Either 'linear' or 'log'. The default is 'linear'.
+        mask : np.array, optional
+            Mask to apply to the edges. If None, no mask is applied. The default is None.
+        
         Returns
         -------
         plt.cm.ScalarMappable
             ScalarMappable object that can be used to add a colorbar to the plot.
         '''
         _cmap = plt.cm.get_cmap(cmap)
-        norm = plt.Normalize(vmin=vmin, vmax=vmax)
         # create the line collection object
         pos_edges = [np.array([self.graph.nodes[edge[0]]['pos'], self.graph.nodes[edge[1]]['pos']]) for edge in self.graph.edges()]
-        color_array = _cmap(norm(edge_state))
-        lc = LineCollection(pos_edges, color = color_array, linewidths = lw, path_effects=[path_effects.Stroke(capstyle="round")])
-        ax.add_collection(lc)
+        _edge_state = edge_state
+        _abs_edge_state = np.abs(_edge_state)
+        if truncate:
+            # consider only the edges with norm(edge_state) larger than truncate_value
+            pos_edges = [pos_edges[i] for i in range(len(pos_edges)) if _abs_edge_state[i] > truncate_value]
+            _edge_state = _edge_state[_abs_edge_state > truncate_value]
+            _abs_edge_state = np.abs(_edge_state)
+
+        if mask is not None:
+            pos_edges = [pos_edges[i] for i in range(len(pos_edges)) if mask[i]]
+            _edge_state = _edge_state[mask]
+            _abs_edge_state = np.abs(_edge_state)
+
+        if plot_mode == 'lines':
+            if vmin is None:
+                vmin = np.min(edge_state)
+            if vmax is None:
+                vmax = np.max(edge_state)
+            if color_scale == 'linear':
+                norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
+            elif color_scale == 'log':
+                norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
+            else:
+                raise ValueError('color_scale must be either "linear" or "log".')
+            color_array = _cmap(norm(_edge_state)) #beware: norm is not abs value, it is the custom function
+            lc = LineCollection(pos_edges, color = color_array, linewidths = lw, path_effects=[path_effects.Stroke(capstyle="round")],zorder=zorder, alpha = alpha)
+            ax.add_collection(lc)
+        elif plot_mode == 'arrows':
+            if vmin is None:
+                vmin = np.min(np.abs(edge_state))
+            if vmax is None:
+                vmax = np.max(np.abs(edge_state))
+            if color_scale == 'linear':
+                norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
+            elif color_scale == 'log':
+                norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
+            else:
+                raise ValueError('color_scale must be either "linear" or "log".')
+            color_array = _cmap(norm(_abs_edge_state))
+            arrows = []
+            for i in range(len(pos_edges)):
+                start_pos = pos_edges[i][0]
+                end_pos = pos_edges[i][1]
+                mid_point = (start_pos + end_pos)/2
+                start_pos_shrunk = start_pos + shrink_factor*(mid_point - start_pos)
+                end_pos_shrunk = end_pos - shrink_factor*(end_pos - mid_point)
+                start_pos, end_pos = start_pos_shrunk, end_pos_shrunk
+
+                if _edge_state[i] < 0:
+                    start_pos, end_pos = end_pos, start_pos
+
+                arrow = FancyArrowPatch(start_pos, end_pos, 
+                                    arrowstyle='simple,head_length=0.5, head_width=0.7, tail_width=0.2', 
+                                    color=color_array[i], 
+                                    linewidth=lw,
+                                    shrinkA=0,
+                                    shrinkB=0,
+                                    mutation_scale= 0.8,
+                                    path_effects=[path_effects.Stroke(capstyle="round")])
+                arrows.append(arrow)
+            pc = PatchCollection(arrows, match_original=True, zorder=zorder, alpha = alpha)
+            ax.add_collection(pc)
+        else:
+            raise ValueError('plot_mode must be either "lines" or "arrows".')
 
         if annotate:
             for i in range(self.ne):
                 ax.annotate(str(i), (np.mean(pos_edges[i][:,0]), np.mean(pos_edges[i][:,1])), fontsize = 2*lw, color = 'black', ha = 'center', va = 'center', zorder = 3, path_effects=[path_effects.withStroke(linewidth=2*lw,
                                                         foreground="w")])
 
+        if autoscale:
+            ax.autoscale()
+
         return plt.cm.ScalarMappable(norm=norm, cmap=cmap)
 
-    def node_state_to_ax(self, ax, node_state, vmin, vmax, cmap = 'viridis', plot_mode = 'collection', radius = 0.1, zorder = 2, annotate = False):
+    def node_state_to_ax(self, ax, node_state, vmin = None, vmax = None, cmap = 'coolwarm', plot_mode = 'ellipses', radius = 0.1, zorder = 2, autoscale = True,annotate = False, color_scale = 'linear'):
         ''' Plot the state of the nodes in the graph.
 
         Parameters
@@ -676,48 +787,78 @@ class Circuit(object):
             Axes object where the plot will be drawn.
         node_state : np.array
             State of the nodes in the graph. node_state has size n.
-        vmin : float
-            Minimum value of the colormap.
-        vmax : float
-            Maximum value of the colormap.
+        vmin : float or None, optional
+            Minimum value of the colormap. If None, vmin is set to the minimum value of node_state. The default is None.
+        vmax : float or None, optional
+            Maximum value of the colormap. If None, vmax is set to the maximum value of node_state. The default is None.
         cmap : str, optional
-            Colormap. The default is 'RdYlBu_r'.
+            Colormap. The default is 'viridis'.
         plot_mode : str, optional
-            If 'collection', the nodes are plotted as a collection plot. If 'triangulation', the nodes are plotted as a triangulation. The default is 'collection'.
+            Plot mode. Either 'ellipses' or 'voronoi'. The default is 'ellipses'.
         radius : float, optional
-            Radius of the nodes. The default is 0.1.
+            Radius of the ellipses or the circles. The default is 0.1.
         zorder : int, optional
-            Zorder of the nodes. The default is 2.
+            zorder of the ellipses or the circles. The default is 2.
+        autoscale : bool, optional
+            If True, the axes are autoscaled. The default is True.
         annotate : bool, optional
             If True, the nodes are annotated with their index. The default is False.
+        color_scale : str, optional
+            Scale of the colormap. Either 'linear' or 'log'. The default is 'linear'.
 
         Returns
         -------
         plt.cm.ScalarMappable
             ScalarMappable object that can be used to add a colorbar to the plot.
         '''
-        posX = self.pts[:,0]
-        posY = self.pts[:,1]
-        norm = plt.Normalize(vmin=vmin, vmax=vmax)
+        if vmin is None:
+            vmin = np.min(node_state)
+        if vmax is None:
+            vmax = np.max(node_state)
+        if color_scale == 'linear':
+            norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
+        elif color_scale == 'log':
+            norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
+        else:
+            raise ValueError('color_scale must be either "linear" or "log".')
+        
+        color_array = plt.cm.get_cmap(cmap)(norm(node_state))
 
-        if plot_mode == 'collection':
+        if plot_mode == 'ellipses':
             # create a collection of ellipses
-            color_array = plt.cm.get_cmap(cmap)(norm(node_state))
             r = np.ones(self.n)*radius
             ec = EllipseCollection(r, r, np.zeros(self.n), color = color_array, linewidths = 1,offsets=self.pts,
                        offset_transform=ax.transData, zorder=zorder)
             ax.add_collection(ec)
-            
 
-            
-        elif plot_mode == 'triangulation':
-            triang = tri.Triangulation(posX, posY)
-            ax.tricontourf(triang, node_state, cmap = cmap, norm = norm, levels = 100)
+            if autoscale:
+                ax.autoscale()
+        elif plot_mode == 'voronoi':
+            # find the extreme points of the graph
+            minX = np.min(self.pts[:,0])
+            maxX = np.max(self.pts[:,0])
+            minY = np.min(self.pts[:,1])
+            maxY = np.max(self.pts[:,1])
+            # plot them in a scatter plot
+            ax.scatter(self.pts[:,0], self.pts[:,1], s = 0)
+            # Autoscale before the polygons are plotted
+            if autoscale:
+                ax.autoscale()
+
+            # create a collection of polygons
+            polygons = get_voronoi_polygons(self.pts)
+            pc = PolyCollection(polygons, color = color_array, linewidths = 1, zorder=zorder)
+            ax.add_collection(pc)
+        else:
+            raise ValueError('plot_mode must be either "ellipses" or "voronoi".')
 
         if annotate:
+            posX = self.pts[:,0]
+            posY = self.pts[:,1]
             for i in range(self.n):
                 ax.annotate(str(i), (posX[i], posY[i]), fontsize = 0.8*radius, color = 'black', ha = 'center', va = 'center', zorder = 3)
+            
+        
 
         # return the colorbar
         return plt.cm.ScalarMappable(norm=norm, cmap=cmap)
- 
