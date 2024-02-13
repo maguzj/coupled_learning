@@ -100,6 +100,7 @@ def generate_speed_report():
         # Create the row of the table
         table_row = f"{size[0]} x {size[1]} | {num_nodes} | {num_edges} | {training_time_CL_nojit:.4f} | {training_time_CL:.4f} | {training_time_GD:.4f} | {localization_time:.4f}\n"
 
+
         # Append the row to the file
         with open('speed_results.txt', 'a') as f:
             f.write(table_row)
