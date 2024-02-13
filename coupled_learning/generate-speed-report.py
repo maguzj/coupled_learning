@@ -3,6 +3,7 @@ sys.path.append('../coupled_learning/')
 from circuit_utils import *
 from network_utils import *
 from cl_utils import *
+from localization_utils import *
 import matplotlib.pyplot as plt
 from packing_utils import *
 import time
@@ -27,7 +28,7 @@ def generate_speed_report():
 
 
     # Create the header of the table
-    table_header = "Size (rows x cols) | Number of nodes | Number of edges | Training time for CL sparse without JIT (s) | Training time for CL dense with JIT (s) | Training time for GD dense with JIT (s)\n"
+    table_header = "Size (rows x cols) | Number of nodes | Number of edges | Training time for CL sparse without JIT (s) | Training time for CL dense with JIT (s) | Training time for GD dense with JIT (s) | Localization of (2,10,100) Modes\n"
     table_header += "---------------------------------------------------------------------------------------------\n"
 
     # Create the file or overwrite it if it already exists
@@ -76,12 +77,28 @@ def generate_speed_report():
         end_time = time.time()
         training_time_GD = end_time - start_time
 
+
+        allo_CL.jaxify()
+
+        evalues, eigenVectors = np.linalg.eig(allo_CL._hessian())
+        sortedEigenVectors = eigenVectors[:,np.argsort(evalues)]
+
+        start_time = time.time()
+        for NMode in [2,10,100]:
+
+            basis = sortedEigenVectors[:,:NMode]
+
+            _, _, _ = localize(allo_CL.pts[:,0], allo_CL.pts[:,1], basis, 0.000005, 10000,20,pbar=True)
+
+        end_time = time.time()
+        localization_time = end_time - start_time
+
         # Get the network details
         num_nodes = g.number_of_nodes()
         num_edges = g.number_of_edges()
 
         # Create the row of the table
-        table_row = f"{size[0]} x {size[1]} | {num_nodes} | {num_edges} | {training_time_CL_nojit:.4f} | {training_time_CL:.4f} | {training_time_GD:.4f}\n"
+        table_row = f"{size[0]} x {size[1]} | {num_nodes} | {num_edges} | {training_time_CL_nojit:.4f} | {training_time_CL:.4f} | {training_time_GD:.4f} | {localization_time:.4f}\n"
 
         # Append the row to the file
         with open('speed_results.txt', 'a') as f:
