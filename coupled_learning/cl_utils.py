@@ -1260,9 +1260,16 @@ class CL(Circuit):
             best_conductances = None
         dic['best_conductances'] = best_conductances
         # Handle best_error (new attribute) to be back compatible
-        if not hasattr(self, 'best_error'):
+        if hasattr(self, 'best_error'):
+            if self.jax:
+                best_error = jax.device_get(jnp.array(self.best_error)).astype(float).tolist()
+            else:
+                best_error = np.array(self.best_error).astype(float).tolist()
+        else:
             best_error = None
-        dic['best_error'] = self.best_error
+        # if not hasattr(self, 'best_error'):
+        #     best_error = None
+        dic['best_error'] = best_error
 
         if hasattr(self, 'inputs_source'):
             dic['inputs_source'] = self.inputs_source.tolist()
