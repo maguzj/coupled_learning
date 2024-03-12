@@ -1,7 +1,7 @@
 # coupled_learning
 ## Setup
 
-0. Preliminaries: Install miniforge
+0. Preliminaries for macOS: Install miniforge
    - Download https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-arm64.sh
    - Run the script
    - Open another shell and run
@@ -24,7 +24,7 @@ git clone git@github.com:maguzj/coupled_learning.git
      ```bash
      conda activate cl
      ```
-   - **For M1/M2 chips:** We have to build numpy with the accelerator. (:warning: this is constantly evolving. New OS will get rid of these tricks.)
+   - **For M1/M2 chips:** We have to build numpy with the accelerator. (:warning: this is constantly evolving. New OS will get rid of these tricks. If you encounter any problem, please create an issue.)
      ```bash
      conda env create --file=environment-M1-M2.yml
      ```
@@ -33,9 +33,8 @@ git clone git@github.com:maguzj/coupled_learning.git
      conda activate cl
      ```
      ```bash
-     pip install --no-binary :all: --no-use-pep517 numpy==1.24.3
+     pip install --no-binary :all: numpy==1.24.3 --no-cache-dir
      ```
-     (This is the only version of numpy in which this has been tested, for newer versions --no-use-pep517 is deprecated)
      Once numpy installed, run
      ```bash
      conda config --set pip_interop_enabled true
@@ -49,7 +48,7 @@ git clone git@github.com:maguzj/coupled_learning.git
      If everything is right, you should see info like ```/System/Library/Frameworks/vecLib.framework/Headers``` printed.
      Then install the higher level dependencies.
      ```bash
-     pip install -r requirements.txt
+     pip install -r requirements.txt --no-cache-dir
      ```
 
      (for more information see: https://gist.github.com/MarkDana/a9481b8134cf38a556cf23e1e815dafb)
@@ -64,5 +63,4 @@ git clone git@github.com:maguzj/coupled_learning.git
 - Implement efficient prunning, back compatible with labeling and indices.
 - Implement Read the Docs
 - Implement triangular networks
-- Implement GPU usage.
 - Tentative: try out the jax.experimental.sparse module to combine both JIT and sparse matrices.
