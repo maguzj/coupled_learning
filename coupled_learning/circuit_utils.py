@@ -656,7 +656,7 @@ class Circuit(object):
         
         print('Warning: this function is going to be deprecated. Use edge_state_to_ax instead.')
 
-    def edge_state_to_ax(self, ax, edge_state, vmin = None, vmax = None, cmap = cmocean.cm.matter, plot_mode = 'lines', lw = 1, zorder = 2, autoscale = True, annotate = False, alpha = 1, truncate = False, truncate_value = 0.1,shrink_factor = 0.3, color_scale = 'linear', mask = None, mask_value = 0):
+    def edge_state_to_ax(self, ax, edge_state, norm=None, vmin = None, vmax = None, cmap = cmocean.cm.matter, plot_mode = 'lines', lw = 1, zorder = 2, autoscale = True, annotate = False, alpha = 1, truncate = False, truncate_value = 0.1,shrink_factor = 0.3, color_scale = 'linear', mask = None, mask_value = 0):
         '''
         Plot the state of the edges in the graph.
 
@@ -735,10 +735,11 @@ class Circuit(object):
                 vmin = np.min(np.abs(edge_state))
             if vmax is None:
                 vmax = np.max(np.abs(edge_state))
-            if color_scale == 'linear':
-                norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
-            elif color_scale == 'log':
-                norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
+            if norm is None:
+                if color_scale == 'linear':
+                    norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
+                elif color_scale == 'log':
+                    norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
             else:
                 raise ValueError('color_scale must be either "linear" or "log".')
             color_array = _cmap(norm(_abs_edge_state))
