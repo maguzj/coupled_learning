@@ -290,7 +290,7 @@ class CL(Circuit):
         ''' Return the power state of the circuit for the current task. '''
         free_state = self.get_free_state()
         voltage_drop_free = self.incidence_matrix.T.dot(free_state)
-        return self.conductances*(voltage_drop_free**2)/2
+        return self.conductances*(voltage_drop_free**2)
 
     def MSE_loss(self, free_state):
         ''' Compute the MSE loss. '''
@@ -515,7 +515,7 @@ class CL(Circuit):
             voltage_drop_clamped = self.incidence_matrix.T.dot(clamped_state)
 
             # power
-            self.current_power = np.sum(self.conductances*(voltage_drop_free**2)/2)
+            self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
             # energy
             self.current_energy += self.current_power
 
@@ -602,7 +602,7 @@ class CL(Circuit):
             # at the end of training, compute the current power and current energy, and save global and save graph
             free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source)
             voltage_drop_free = free_state.dot(self.incidence_matrix)
-            self.current_power = np.sum(self.conductances*(voltage_drop_free**2)/2)
+            self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
             self.current_energy += self.current_power
             self.power.append(self.current_power)
             self.energy.append(self.current_energy)
@@ -653,7 +653,7 @@ class CL(Circuit):
                     self.save_local(save_path+'.csv')
 
             # at the end of training, compute the current power and current energy, and save global and save graph
-            self.current_power = np.sum(self.conductances*(voltage_drop_free**2)/2)
+            self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
             self.current_energy += self.current_power
             self.power.append(self.current_power)
             self.energy.append(self.current_energy)
@@ -685,7 +685,7 @@ class CL(Circuit):
         voltage_drop_clamped = self.incidence_matrix.T.dot(clamped_state)
 
         # power
-        self.current_power = np.sum(self.conductances*(voltage_drop_free**2)/2)
+        self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
         # energy
         self.current_energy += self.current_power
 
@@ -699,10 +699,52 @@ class CL(Circuit):
         
         return free_state, voltage_drop_free, delta_conductances, self.conductances
 
+    def _step_ACL(self, eta = 0.001):
+        ''' Perform a step of anti coupled learning. '''
+        # free state. Notice that it is not worth using get_free_state, since it checks if a task was given at each call.
+        free_state = self.solve(self.Q_free, self.inputs_source)
+
+        if self.target_type == 'node':
+            nudge = free_state[self.indices_target] + eta * (self.outputs_target - free_state[self.indices_target])
+
+        elif self.target_type == 'edge':
+
+            # DP = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
+            DP = free_state[self.indices_target[:,0]] - free_state[self.indices_target[:,1]]
+            nudge = DP + eta * (self.outputs_target - DP)
+
+        clamped_state = self.solve(self.Q_clamped, np.concatenate((self.inputs_source, nudge)))
+
+        # voltage drop
+        # ROOM FOR IMPROVEMENT? WE ARE TRANSPOSING THE INCIDENCE MATRIX AT EACH STEP
+        voltage_drop_free = self.incidence_matrix.T.dot(free_state)
+        voltage_drop_clamped = self.incidence_matrix.T.dot(clamped_state)
+
+        # power
+        self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
+        # energy
+        self.current_energy += self.current_power
+
+        # Update the conductances
+        delta_conductances = -1.0/eta * (voltage_drop_free**2 - voltage_drop_clamped**2)
+        self.conductances = self.conductances + self.learning_rate*delta_conductances
+        self._clip_conductances()
+
+        # Update the learning step
+        self.learning_step += 1
+        
+        return free_state, voltage_drop_free, delta_conductances, self.conductances
+
     def iterate_CL(self, n_steps, eta = 0.001):
         ''' Iterate coupled learning for n_steps. '''
         for i in range(n_steps):
             free_state, voltage_drop_free , delta_conductances , conductances = self._step_CL(eta)
+        return free_state, voltage_drop_free , delta_conductances , conductances
+
+    def iterate_ACL(self, n_steps, eta = 0.001):
+        ''' Iterate anti coupled learning for n_steps. '''
+        for i in range(n_steps):
+            free_state, voltage_drop_free , delta_conductances , conductances = self._step_ACL(eta)
         return free_state, voltage_drop_free , delta_conductances , conductances
     
 
@@ -752,7 +794,7 @@ class CL(Circuit):
                 self.save_local(save_path+'.csv')
     
         # at the end of training, compute the current power and current energy, and save global and save graph
-        self.current_power = np.sum(self.conductances*(voltage_drop_free**2)/2)
+        self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
         self.current_energy += self.current_power
         self.power.append(self.current_power)
         self.energy.append(self.current_energy)
@@ -780,7 +822,7 @@ class CL(Circuit):
         voltage_drop_clamped = incidence_matrix.T.dot(clamped_state)
 
         # power
-        current_power = np.sum(conductances*(voltage_drop_free**2)/2)
+        current_power = np.sum(conductances*(voltage_drop_free**2))
 
         # Update the conductances
         delta_conductances = -1.0/eta * (voltage_drop_clamped**2 - voltage_drop_free**2)
@@ -805,7 +847,7 @@ class CL(Circuit):
         voltage_drop_clamped = incidence_matrix.T.dot(clamped_state)
 
         # power
-        current_power = np.sum(conductances*(voltage_drop_free**2)/2)
+        current_power = np.sum(conductances*(voltage_drop_free**2))
 
         # Update the conductances
         delta_conductances = -1.0/eta * (voltage_drop_clamped**2 - voltage_drop_free**2)
@@ -892,7 +934,7 @@ class CL(Circuit):
             # at the end of training, compute the current power and current energy, and save global and save graph
             free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source)
             voltage_drop_free = free_state.dot(self.incidence_matrix)
-            self.current_power = np.sum(self.conductances*(voltage_drop_free**2)/2)
+            self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
             self.current_energy += self.current_power
             self.power.append(self.current_power)
             self.energy.append(self.current_energy)
@@ -941,7 +983,7 @@ class CL(Circuit):
                     self.save_local(save_path+'.csv')
 
             # at the end of training, compute the current power and current energy, and save global and save graph
-            self.current_power = np.sum(self.conductances*(voltage_drop_free**2)/2)
+            self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
             self.current_energy += self.current_power
             self.power.append(self.current_power)
             self.energy.append(self.current_energy)
@@ -950,6 +992,75 @@ class CL(Circuit):
                 self.save_global(save_path+'_global.json')
                 self.save_graph(save_path+'_graph.json')
             return self.losses, conductances
+
+    def train_ACL(self, n_epochs, n_steps_per_epoch, eta, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = 'trained_circuit'):
+        ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of anti coupled learning.
+        If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
+        '''
+        if pbar:
+            epochs = tqdm(range(n_epochs))
+        else:
+            epochs = range(n_epochs)
+
+        if log_spaced:
+            n_steps = n_epochs * n_steps_per_epoch
+            n_steps_per_epoch = log_partition(n_steps, n_epochs)
+        else:
+            actual_steps_per_epoch = n_steps_per_epoch
+
+        if self.jax: # Dense and JIT training (gpu)
+            # abort
+            raise NotImplementedError
+        else: # Sparse and no JIT training (no gpu)
+            # initial state
+            if self.learning_step == 0:
+                self.end_epoch.append(self.learning_step)
+                loss = self.MSE_loss(self.get_free_state())
+                if loss < self.best_error:
+                    self.best_error = loss
+                    self.best_conductances = self.conductances
+                self.losses.append(loss)
+                if save_state:
+                    self.save_local(save_path+'.csv')
+            else: #to avoid double counting the initial state
+                # remove the last element of power and energy
+                self.power.pop()
+                self.energy.pop()
+                # set the current power and energy to the last element
+                self.current_power = self.power[-1]
+                self.current_energy = self.energy[-1]
+
+            #training
+            for epoch in epochs:
+                if log_spaced:
+                    actual_steps_per_epoch = n_steps_per_epoch[epoch]
+                free_state, voltage_drop_free , delta_conductances , conductances = self.iterate_ACL(actual_steps_per_epoch, eta)
+                loss = self.MSE_loss(free_state)
+                if loss < self.best_error:
+                    self.best_error = loss
+                    self.best_conductances = self.conductances
+                self.losses.append(loss)
+                self.power.append(self.current_power)
+                self.energy.append(self.current_energy)
+                if verbose:
+                    print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
+                self.epoch += 1
+                self.end_epoch.append(self.learning_step)
+                if save_state:
+                    # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
+                    self.save_local(save_path+'.csv')
+
+            # at the end of training, compute the current power and current energy, and save global and save graph
+            self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
+            self.current_energy += self.current_power
+            self.power.append(self.current_power)
+            self.energy.append(self.current_energy)
+
+            if save_global:
+                self.save_global(save_path+'_global.json')
+                self.save_graph(save_path+'_graph.json')
+            return self.losses, conductances
+
 
 
 
@@ -988,7 +1099,7 @@ class CL(Circuit):
             for i in range(n_steps):
                 free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source)
                 voltage_drop_free = free_state.dot(self.incidence_matrix)
-                self.current_power = np.sum(self.conductances*(voltage_drop_free**2)/2)
+                self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
                 self.current_energy += self.current_power
                 self.learning_step += 1
                 self.conductances = CL._sstep_GD_NA(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.learning_rate, self.min_k, self.max_k)
@@ -996,7 +1107,7 @@ class CL(Circuit):
             for i in range(n_steps):
                 free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source)
                 voltage_drop_free = free_state.dot(self.incidence_matrix)
-                self.current_power = np.sum(self.conductances*(voltage_drop_free**2)/2)
+                self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
                 self.current_energy += self.current_power
                 self.learning_step += 1
                 self.conductances = CL._sstep_GD_EA(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.learning_rate, self.min_k, self.max_k)
@@ -1062,7 +1173,7 @@ class CL(Circuit):
         # at the end of training, compute the current power and current energy, and save global and save graph
         free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source)
         voltage_drop_free = free_state.dot(self.incidence_matrix)
-        self.current_power = np.sum(self.conductances*(voltage_drop_free**2)/2)
+        self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
         self.current_energy += self.current_power
         self.power.append(self.current_power)
         self.energy.append(self.current_energy)
@@ -1094,7 +1205,7 @@ class CL(Circuit):
     #     # power and energy prior to the update
     #     # WARNING: I'M NOT SURE WHY JAX DOT OF (N,) AND (M, N) GIVES THE SAME RESULT AS NUMPY DOT  (M, N) AND (N,), BUT IT SAVES A TRANSPOSITION
     #     voltage_drop_free = free_state.dot(self.incidence_matrix)
-    #     self.current_power = np.sum(self.conductances*(voltage_drop_free**2)/2)
+    #     self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
     #     self.current_energy += self.current_power
     #     # update the conductances
     #     self.conductances = self.conductances - self.learning_rate*jax.grad(self.jax_MSE_loss)(self.conductances)
@@ -1158,7 +1269,7 @@ class CL(Circuit):
     #             self.save_local(save_path+'.csv')
     #     # at the end of training, compute the current power and current energy, and save global and save graph
     #     voltage_drop_free = self.get_free_state().dot(self.incidence_matrix)
-    #     self.current_power = np.sum(self.conductances*(voltage_drop_free**2)/2)
+    #     self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
     #     self.current_energy += self.current_power
     #     self.power.append(self.current_power)
     #     self.energy.append(self.current_energy)

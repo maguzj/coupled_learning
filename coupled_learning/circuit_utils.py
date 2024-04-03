@@ -89,11 +89,11 @@ class Circuit(object):
 
     def _hessian(self):
         ''' Compute the Hessian of the network with respect to the conductances. '''
-        return (self.incidence_matrix*self.conductances).dot(self.incidence_matrix.T)
+        return 2*(self.incidence_matrix*self.conductances).dot(self.incidence_matrix.T)
 
     def _jax_hessian(self):
         ''' Compute the Hessian of the network with respect to the conductances. '''
-        return jnp.dot(self.incidence_matrix*self.conductances,jnp.transpose(self.incidence_matrix))
+        return 2*jnp.dot(self.incidence_matrix*self.conductances,jnp.transpose(self.incidence_matrix))
     
     @staticmethod
     def _shessian(conductances,incidence_matrix):
@@ -472,7 +472,7 @@ class Circuit(object):
             raise ValueError('Voltages have the wrong size.')
         # compute the power dissipated
         voltage_drop = self.incidence_matrix.T.dot(voltages)
-        return np.sum(self.conductances*(voltage_drop**2)/2)
+        return np.sum(self.conductances*(voltage_drop**2))
 
     def effective_conductance(self, array_pair_indices_nodes, seed = 0):
         ''' 
