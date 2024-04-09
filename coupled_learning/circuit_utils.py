@@ -656,7 +656,7 @@ class Circuit(object):
         
         print('Warning: this function is going to be deprecated. Use edge_state_to_ax instead.')
 
-    def edge_state_to_ax(self, ax, edge_state, vmin = None, vmax = None, cmap = cmocean.cm.matter, plot_mode = 'lines', lw = 1, zorder = 2, autoscale = True, annotate = False, alpha = 1, truncate = False, truncate_value = 0.1,shrink_factor = 0.3, color_scale = 'linear', mask = None, mask_value = 0):
+    def edge_state_to_ax(self, ax, edge_state, norm=None, vmin = None, vmax = None, cmap = cmocean.cm.matter, plot_mode = 'lines', lw = 1, zorder = 2, autoscale = True, annotate = False, alpha = 1, truncate = False, truncate_value = 0.1,shrink_factor = 0.3, color_scale = 'linear', mask = None, mask_value = 0):
         '''
         Plot the state of the edges in the graph.
 
@@ -717,30 +717,32 @@ class Circuit(object):
             _abs_edge_state = np.abs(_edge_state)
 
         if plot_mode == 'lines':
-            if vmin is None:
-                vmin = np.min(edge_state)
-            if vmax is None:
-                vmax = np.max(edge_state)
-            if color_scale == 'linear':
-                norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
-            elif color_scale == 'log':
-                norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
-            else:
-                raise ValueError('color_scale must be either "linear" or "log".')
+            if norm is None:    
+                if vmin is None:
+                    vmin = np.min(edge_state)
+                if vmax is None:
+                    vmax = np.max(edge_state)
+                if color_scale == 'linear':
+                    norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
+                elif color_scale == 'log':
+                    norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
+                else:
+                    raise ValueError('color_scale must be either "linear" or "log".')
             color_array = _cmap(norm(_edge_state)) #beware: norm is not abs value, it is the custom function
             lc = LineCollection(pos_edges, color = color_array, linewidths = lw, path_effects=[path_effects.Stroke(capstyle="round")],zorder=zorder, alpha = alpha)
             ax.add_collection(lc)
         elif plot_mode == 'arrows':
-            if vmin is None:
-                vmin = np.min(np.abs(edge_state))
-            if vmax is None:
-                vmax = np.max(np.abs(edge_state))
-            if color_scale == 'linear':
-                norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
-            elif color_scale == 'log':
-                norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
-            else:
-                raise ValueError('color_scale must be either "linear" or "log".')
+            if norm is None:                    
+                if vmin is None:
+                    vmin = np.min(np.abs(edge_state))
+                if vmax is None:
+                    vmax = np.max(np.abs(edge_state))
+                if color_scale == 'linear':
+                    norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
+                elif color_scale == 'log':
+                    norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
+                else:
+                    raise ValueError('color_scale must be either "linear" or "log".')
             color_array = _cmap(norm(_abs_edge_state))
             arrows = []
             for i in range(len(pos_edges)):
@@ -778,7 +780,7 @@ class Circuit(object):
 
         return plt.cm.ScalarMappable(norm=norm, cmap=cmap)
 
-    def node_state_to_ax(self, ax, node_state, vmin = None, vmax = None, cmap = 'coolwarm', plot_mode = 'ellipses', radius = 0.1, zorder = 2, autoscale = True,annotate = False, color_scale = 'linear'):
+    def node_state_to_ax(self, ax, node_state, norm=None, vmin = None, vmax = None, cmap = 'coolwarm', plot_mode = 'ellipses', radius = 0.1, zorder = 2, autoscale = True,annotate = False, color_scale = 'linear'):
         ''' Plot the state of the nodes in the graph.
 
         Parameters
@@ -811,17 +813,17 @@ class Circuit(object):
         plt.cm.ScalarMappable
             ScalarMappable object that can be used to add a colorbar to the plot.
         '''
-        if vmin is None:
-            vmin = np.min(node_state)
-        if vmax is None:
-            vmax = np.max(node_state)
-        if color_scale == 'linear':
-            norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
-        elif color_scale == 'log':
-            norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
-        else:
-            raise ValueError('color_scale must be either "linear" or "log".')
-        
+        if norm is None:    
+            if vmin is None:
+                vmin = np.min(node_state)
+            if vmax is None:
+                vmax = np.max(node_state)
+            if color_scale == 'linear':
+                norm = mplcolors.Normalize(vmin=vmin, vmax=vmax)
+            elif color_scale == 'log':
+                norm = mplcolors.LogNorm(vmin=vmin, vmax=vmax)
+            else:
+                raise ValueError('color_scale must be either "linear" or "log".')
         color_array = plt.cm.get_cmap(cmap)(norm(node_state))
 
         if plot_mode == 'ellipses':
@@ -858,7 +860,5 @@ class Circuit(object):
             for i in range(self.n):
                 ax.annotate(str(i), (posX[i], posY[i]), fontsize = 0.8*radius, color = 'black', ha = 'center', va = 'center', zorder = 3)
             
-        
-
         # return the colorbar
         return plt.cm.ScalarMappable(norm=norm, cmap=cmap)
