@@ -21,7 +21,9 @@ import matplotlib.patheffects as path_effects
 from jax import jit
 from voronoi_utils import get_voronoi_polygons
 import cmocean
+# from dataclasses import dataclass
 
+# @dataclass
 class Circuit(object):
     ''' Class to simulate a circuit with trainable conductances 
     

@@ -241,6 +241,8 @@ class CL(Circuit):
             target type, "node" or "edge"
         task_type : string
             task type, "allostery" or "regression"
+        matrix : np.array
+            Matrix for regression.
         
         Returns
         -------
@@ -260,6 +262,47 @@ class CL(Circuit):
         elif self.target_type == 'edge':
             q_edge = self.constraint_matrix(indices_target, restrictionType='edge')
             self.Q_clamped = hstack([self.Q_free, q_edge])
+        
+        if matrix is not None:
+            self.set_regression_matrix(matrix)
+
+        return self.Q_free, self.Q_clamped
+
+    def jax_set_task_regression(self, indices_source, indices_target, target_type='node', task_type = 'regression', matrix = None):
+        ''' Set the task of the circuit for regression.
+
+        Parameters
+        ----------
+        indices_source : np.array
+            Indices of the nodes of the source.
+        indices_target : np.array
+            If target is node, indices of the nodes of the target.
+            If target is edge, array with edge index, and nodes i, j. 
+        target_type : string
+            target type, "node" or "edge"
+        task_type : string
+            task type, "allostery" or "regression"
+        matrix : np.array
+            Matrix for regression.
+        
+        Returns
+        -------
+        Q_free : scipy.sparse.csr_matrix
+            Constraint matrix Q_free: a sparse constraint rectangular matrix of size n x len(indices_source). Its entries are only 1 or 0.
+        Q_clamped : scipy.sparse.csr_matrix
+            Constraint matrix Q_clamped: a sparse constraint rectangular matrix of size n x (len(indices_source) + len(indices_target)). Its entries are only 1 or 0.
+        '''
+        self.task_type = task_type
+        self.target_type = target_type
+        self.indices_source = indices_source
+        self.indices_target = indices_target
+        # Compute the constraint matrices
+        self.Q_free = self.jax_constraint_matrix(self.indices_source)
+        if self.target_type == 'node':
+            self.Q_clamped = self.jax_constraint_matrix(jnp.concatenate((self.indices_source, self.indices_target)))    
+        elif self.target_type == 'edge':
+            q_edge = self.jax_constraint_matrix(indices_target, restrictionType='edge')
+            self.Q_clamped = jnp.concatenate([self.Q_free,q_edge], axis=1)
         
         if matrix is not None:
             self.set_regression_matrix(matrix)
@@ -300,17 +343,6 @@ class CL(Circuit):
             # freeState_DV = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
             freeState_DV = free_state[self.indices_target[:,0]] - free_state[self.indices_target[:,1]]
             return 0.5*np.mean((freeState_DV - self.outputs_target)**2)
-
-    # def _single_MSE_loss(self, free_state, outputs_target):
-    #     ''' Compute the MSE loss. '''
-    #     if self.target_type == 'node':
-    #         return 0.5*np.mean((free_state[self.indices_target] - outputs_target)**2)
-    #     elif self.target_type == 'edge':
-    #         # freeState_DV = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
-    #         freeState_DV = free_state[self.indices_target[:,0]] - free_state[self.indices_target[:,1]]
-    #         return 0.5*np.mean((freeState_DV - outputs_target)**2)
-    
-    # def MSE_loss_regression(self, free_state, outputs_target_array):
 
     def compute_MSE(self, output_pred, output_true):
         ''' Compute the MSE loss. '''
@@ -415,6 +447,28 @@ class CL(Circuit):
                 raise ValueError('target_type must be "node" for regression')
             return hessian_func(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
 
+    @staticmethod
+    def mse_batch(output_pred,output_true):
+        ''' Compute the MSE loss. '''
+        return 0.5*jnp.mean((output_pred - output_true)**2)
+    
+    @staticmethod
+    def mse_from_input_batch(conductances, incidence_matrix, Q, indices_target, input_data, true_output_data):
+        ''' Compute the MSE loss. '''
+        output_data = jnp.array([Circuit.ssolve(conductances, incidence_matrix, Q, inp)[indices_target] for inp in input_data])
+        return CL.mse_batch(output_data, true_output_data)
+
+    @staticmethod
+    def gradient_mse_batch(conductances, incidence_matrix, Q, indices_target, input_data, true_output_data):
+        ''' Compute the gradient of the MSE loss. '''
+        grad_func = jax.grad(CL.mse_from_input_batch, argnums=0)
+        return grad_func(conductances, incidence_matrix, Q, indices_target, input_data, true_output_data)
+
+    @staticmethod
+    def hessian_mse_batch(conductances, incidence_matrix, Q, indices_target, input_data, true_output_data):
+        ''' Compute the hessian of the MSE loss. '''
+        hessian_func = jax.hessian(CL.mse_from_input_batch, argnums=0)
+        return hessian_func(conductances, incidence_matrix, Q, indices_target, input_data, true_output_data)
 
     def jaxify(self):
         ''' Jaxify the circuit. '''
@@ -1110,9 +1164,31 @@ class CL(Circuit):
                 self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
                 self.current_energy += self.current_power
                 self.learning_step += 1
-                self.conductances = CL._sstep_GD_EA(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.learning_rate, self.min_k, self.max_k)
+                self.conductances = CL._sstep_GD_EA(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.learning_rate, self.min_k, self.max_k) 
         else:
             raise Exception('task must be "node" or "edge"')
+        return self.conductances
+
+    @staticmethod
+    @jit
+    def _sstep_GD_mse(conductances, incidence_matrix, Q, indices_target, learning_rate, min_k, max_k,input_data,true_output_data):
+        ''' Perform a step of gradient descent over a generic mse'''
+        new_conductances = conductances - learning_rate*CL.gradient_mse_batch(conductances, incidence_matrix, Q, indices_target, input_data, true_output_data)
+        new_conductances = jnp.clip(new_conductances, min_k, max_k)
+        return new_conductances
+
+    def _siterate_GD_mse_batch(self, train_data, n_steps, batch_size):
+        ''' Iterate gradient descent for n_steps, considering batch_size samples from train_data. '''
+        for i in range(n_steps):
+            batch = train_data[np.random.choice(len(train_data), batch_size, replace=False)]
+            input_data = batch[:,:len(self.indices_source)]
+            true_output_data = batch[:,len(self.indices_source):]
+            free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, input_data[0])
+            voltage_drop_free = free_state.dot(self.incidence_matrix)
+            self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
+            self.current_energy += self.current_power
+            self.learning_step += 1
+            self.conductances = CL._sstep_GD_mse(self.conductances, self.incidence_matrix, self.Q_free, self.indices_target, self.learning_rate, self.min_k, self.max_k, input_data, true_output_data)
         return self.conductances
 
 
@@ -1182,6 +1258,80 @@ class CL(Circuit):
             self.save_global(save_path+'_global.json')
             self.save_graph(save_path+'_graph.json')
         return self.losses, conductances
+
+    def train_GD_batch(self, train_data, n_epochs, n_steps_per_epoch, batch_size, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = 'trained_circuit'):
+        ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of gradient descent.
+        If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
+        '''
+        if pbar:
+            epochs = tqdm(range(n_epochs))
+        else:
+            epochs = range(n_epochs)
+
+        if log_spaced:
+            n_steps = n_epochs * n_steps_per_epoch
+            n_steps_per_epoch = log_partition(n_steps, n_epochs)
+        else:
+            actual_steps_per_epoch = n_steps_per_epoch
+        
+
+
+        # initial state
+        if self.learning_step == 0:
+            self.end_epoch.append(self.learning_step)
+            batch = train_data[np.random.choice(len(train_data), batch_size, replace=False)]
+            input_data = batch[:,:len(self.indices_source)]
+            true_output_data = batch[:,len(self.indices_source):]
+            loss = CL.mse_from_input_batch(self.conductances, self.incidence_matrix, self.Q_free, self.indices_target, input_data, true_output_data)
+            if loss < self.best_error:
+                self.best_error = loss
+                self.best_conductances = self.conductances
+            self.losses.append(loss)
+            if save_state:
+                self.save_local(save_path+'.csv')
+        else:
+            # remove the last element of power and energy
+            self.power.pop()
+            self.energy.pop()
+            # set the current power and energy to the last element
+            self.current_power = self.power[-1]
+            self.current_energy = self.energy[-1]
+
+        #training
+        for epoch in epochs:
+            if log_spaced:
+                actual_steps_per_epoch = n_steps_per_epoch[epoch]
+            conductances = self._siterate_GD_mse_batch(train_data, actual_steps_per_epoch, batch_size)
+            batch = train_data[np.random.choice(len(train_data), batch_size, replace=False)]
+            input_data = batch[:,:len(self.indices_source)]
+            true_output_data = batch[:,len(self.indices_source):]
+            loss = CL.mse_from_input_batch(self.conductances, self.incidence_matrix, self.Q_free, self.indices_target, input_data, true_output_data)
+            if loss < self.best_error:
+                self.best_error = loss
+                self.best_conductances = self.conductances
+            self.losses.append(loss)
+            self.power.append(self.current_power)
+            self.energy.append(self.current_energy)
+            if verbose:
+                print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
+            self.epoch += 1
+            self.end_epoch.append(self.learning_step)
+            if save_state:
+                self.save_local(save_path+'.csv')
+
+         # at the end of training, compute the current power and current energy, and save global and save graph
+        free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, input_data[0])
+        voltage_drop_free = free_state.dot(self.incidence_matrix)
+        self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
+        self.current_energy += self.current_power
+        self.power.append(self.current_power)
+        self.energy.append(self.current_energy)
+
+        if save_global:
+            self.save_global(save_path+'_global.json')
+            self.save_graph(save_path+'_graph.json')
+        return self.losses, conductances
+        
 
 
     def reset_training(self):
@@ -1639,8 +1789,9 @@ def CL_from_file(jsonfile_global, jsonfile_graph, csv_local=None, new_train=Fals
                 allo.set_task(indices_source, inputs_source, indices_target, outputs_target, target_type)
         elif task_type == 'regression':
             if jax:
-                pass
-                #allo.jax_set_task_regression(indices_source, inputs_source, indices_target, outputs_target, target_type)
+                if outputs_target is not None:
+                    allo.set_regression_matrix(outputs_target)
+                allo.jax_set_task_regression(indices_source, indices_target, target_type, task_type)
             else:
                 allo.set_regression_matrix(outputs_target)
                 allo.set_task_regression(indices_source, indices_target, target_type, task_type)
