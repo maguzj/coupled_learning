@@ -18,7 +18,7 @@ from matplotlib.patches import FancyArrowPatch
 from matplotlib.collections import PatchCollection
 import matplotlib.patheffects as path_effects
 # import matplotlib.tri as tri
-from jax import jit
+from jax import jit, vmap
 from voronoi_utils import get_voronoi_polygons
 import cmocean
 # from dataclasses import dataclass
@@ -43,6 +43,10 @@ class Circuit(object):
         Number of edges in the graph.
     pts: numpy.ndarray
         Positions of the nodes in the graph.
+    jax : bool
+        If True, the class is using jax. If False, the class is using scipy.sparse.
+    indicence_matrix : scipy.sparse.csr_matrix or jnp.array
+        Incidence matrix of the graph. The incidence matrix is oriented.
     '''
 
     def __init__(self, graph, jax=False):
@@ -54,143 +58,70 @@ class Circuit(object):
         self.n = len(self.graph.nodes)
         self.ne = len(self.graph.edges)
         self.pts = np.array([self.graph.nodes[node]['pos'] for node in self.graph.nodes])
+        self.jax = jax
 
         self.incidence_matrix = nx.incidence_matrix(self.graph, oriented=True)
         if jax:
             self.incidence_matrix = jnp.array(self.incidence_matrix.todense())
             
 
-    # def setPositions(self, positions):
-    #     # positions is a list of tuples
-    #     assert len(positions) == self.n, 'positions must have the same length as the number of nodes'
-    #     self.pts = positions
-
-    def setConductances(self, conductances):
+    def set_conductances(self, conductances):
         # conductances is a list of floats
         assert len(conductances) == self.ne, 'conductances must have the same length as the number of edges'
         # if list, convert to numpy array
-        if type(conductances) == list:
+        if self.jax:
+            conductances = jnp.array(conductances)
+        else:
             conductances = np.array(conductances)
         self.conductances = conductances
-
-    def jax_setConductances(self, conductances):
-        # conductances is a list of floats
-        assert len(conductances) == self.ne, 'conductances must have the same length as the number of edges'
-        # if list, convert to numpy array
-        if type(conductances) == list:
-            conductances = jnp.array(conductances)
-        self.conductances = conductances
-
-    def _setConductances_as_weights(self):
-        ''' Set the conductances as weights of the edges in the graph. '''
-        nx.set_edge_attributes(self.graph, dict(zip(self.graph.edges, self.conductances)), 'weight')
-
-    def weight_to_conductance(self):
-        ''' Set the conductances as weights of the edges in the graph. '''
-        self.conductances = np.array([self.graph.edges[edge]['weight'] for edge in self.graph.edges])
 
     def _hessian(self):
         ''' Compute the Hessian of the network with respect to the conductances. '''
         return 2*(self.incidence_matrix*self.conductances).dot(self.incidence_matrix.T)
-
-    def _jax_hessian(self):
-        ''' Compute the Hessian of the network with respect to the conductances. '''
-        return 2*jnp.dot(self.incidence_matrix*self.conductances,jnp.transpose(self.incidence_matrix))
     
     @staticmethod
-    def _shessian(conductances,incidence_matrix):
+    def _s_hessian(conductances,incidence_matrix):
         ''' Compute the Hessian of the network with respect to the conductances. '''
-        return jnp.dot(incidence_matrix*conductances,jnp.transpose(incidence_matrix))
-    
-    def constraint_matrix(self, indices_nodes, restrictionType = 'node'):
-        ''' Compute the constraint matrix Q for the circuit and the nodes represented by indices_nodes. 
-        Q is a sparse constraint rectangular matrix of size n x len(indices_nodes). Its entries are only 1 or 0.
-        Q.Q^T is a projector onto to the space of the nodes.
+        return 2*jnp.dot(incidence_matrix*conductances,jnp.transpose(incidence_matrix))
 
+
+    def constraint_matrix(self, indices_nodes):
+        ''' Compute the constraint matrix Q given by indices_nodes.
+        Q corresponds to the projector onto the space of indices_nodes. 
+        
         Parameters
-		----------
-		indices_nodes : np.array
-            if restrictionType == 'node':
-    			Array with the indices of the nodes to be constrained. The nodes themselves are given by np.array(self.graph.nodes)[indices_nodes].
-            if restrictionType == 'edge':
-                Array with the pairs of indices of the nodes to be constrained. The order of the elements signal the direction of the flow constraint,
-                from the first to the second.
+        ----------
+        indices_nodes : np.array
+            Array with the indices of the nodes to be constrained. The nodes themselves are given by np.array(self.graph.nodes)[indices_nodes].
+            if the entries are arrays of two indices, the constraints are  flow constraints from the first to the second node.
+            else, the constraints are a node constraints.
 
-		Returns
-		-------
-		Q: scipy.sparse.csr_matrix
-			Constraint matrix Q: a sparse constraint rectangular matrix of size n x len(indices_nodes). Its entries are only 1, -1, or 0.
-            Q.Q^T is a projector onto to the space of the nodes.
-		
+        Returns
+        -------
+        Q : scipy.sparse.csr_matrix (jax=false) or jnp.array (jax=true)
+            Constraint matrix Q: a rectangular matrix of size n x len(indices_nodes).
         '''
+        shape = indices_nodes.shape
         # Check indicesNodes is a non-empty array
-        if len(indices_nodes) == 0:
+        if shape[0] == 0:
             raise ValueError('indicesNodes must be a non-empty array.')
-        if restrictionType == 'node':
-            # check that indices_nodes has a valid shape (integer,)
-            if len(indices_nodes.shape) != 1:
-                raise ValueError('indices_nodes must be a 1D array.')
-            # Create the sparse rectangular constraint matrix Q. Q has entries 1 at the indicesNodes[i] row and i column.
-            Q = csr_matrix((np.ones(len(indices_nodes)), (indices_nodes, np.arange(len(indices_nodes)))), shape=(self.n, len(indices_nodes)))
-        elif restrictionType == 'edge':
-            # check that indices_nodes has a valid shape (integer, 2)
-            if len(indices_nodes.shape) != 2 or indices_nodes.shape[1] != 2:
-                raise ValueError('indices_nodes must be a 2D array with shape (integer, 2).')
-            # Create the sparse rectangular constraint matrix Q. Q has entries 1 at the indicesNodes[i,0] row and i column, and -1 at the indicesNodes[i,1] row and i column.
-            Q = csr_matrix((np.ones(len(indices_nodes)), (indices_nodes[:,0], np.arange(len(indices_nodes)))), shape=(self.n, len(indices_nodes))) + csr_matrix((-np.ones(len(indices_nodes)), (indices_nodes[:,1], np.arange(len(indices_nodes)))), shape=(self.n, len(indices_nodes)))
+
+        if self.jax:
+            if len(shape) == 1:
+                Q = jnp.zeros(shape=(self.n, shape[0]))
+                Q = Q.at[indices_nodes, jnp.arange(shape[0])].set(1)
+            elif len(shape) == 2 and shape[1] == 2:
+                Q = jnp.zeros(shape=(self.n, shape[0]))
+                Q = Q.at[indices_nodes[:,0], jnp.arange(shape[0])].set(1)
+                Q = Q.at[indices_nodes[:,1], jnp.arange(shape[0])].set(-1)
         else:
-            raise ValueError('restrictionType must be either "node" or "edge".')
-        return Q
-    
-    def jax_constraint_matrix(self, indices_nodes, restrictionType = 'node'):
-        ''' Compute the constraint matrix Q for the circuit and the nodes represented by indices_nodes. 
-        Q is a dense constraint rectangular matrix of size n x len(indices_nodes). Its entries are only 1 or 0.
-        Q.Q^T is a projector onto to the space of the nodes.
-
-        Parameters
-		----------
-		indices_nodes : np.array
-            if restrictionType == 'node':
-    			Array with the indices of the nodes to be constrained. The nodes themselves are given by np.array(self.graph.nodes)[indices_nodes].
-            if restrictionType == 'edge':
-                Array with the pairs of indices of the nodes to be constrained. The order of the elements signal the direction of the flow constraint,
-                from the first to the second.
-		Returns
-		-------
-		Q: 
-			Constraint matrix Q: a dense constraint rectangular matrix of size n x len(indices_nodes). Its entries are only 1, -1, or 0.
-            Q.Q^T is a projector onto to the space of the nodes.
-		
-        '''
-        # # Check indicesNodes is a non-empty array
-        # if len(indices_nodes) == 0:
-        #     raise ValueError('indicesNodes must be a non-empty array.')
-        # # Create the sparse rectangular constraint matrix Q. Q has entries 1 at the indicesNodes[i] row and i column.
-        # Q = jnp.zeros(shape=(self.n, len(indices_nodes)))
-        # Q = Q.at[indices_nodes, jnp.arange(len(indices_nodes))].set(1)
-        # return Q
-
-
-        # Check indicesNodes is a non-empty array
-        if len(indices_nodes) == 0:
-            raise ValueError('indicesNodes must be a non-empty array.')
-        if restrictionType == 'node':
-            # check that indices_nodes has a valid shape (integer,)
-            if len(indices_nodes.shape) != 1:
-                raise ValueError('indices_nodes must be a 1D array.')
-            # Create the sparse rectangular constraint matrix Q. Q has entries 1 at the indicesNodes[i] row and i column.
-            Q = jnp.zeros(shape=(self.n, len(indices_nodes)))
-            Q = Q.at[indices_nodes, jnp.arange(len(indices_nodes))].set(1)
-        elif restrictionType == 'edge':
-            # check that indices_nodes has a valid shape (integer, 2)
-            if len(indices_nodes.shape) != 2 or indices_nodes.shape[1] != 2:
-                raise ValueError('indices_nodes must be a 2D array with shape (integer, 2).')
-            # Create the sparse rectangular constraint matrix Q. Q has entries 1 at the indicesNodes[i,0] row and i column, and -1 at the indicesNodes[i,1] row and i column.
-            Q = jnp.zeros(shape=(self.n, len(indices_nodes)))
-            Q = Q.at[indices_nodes[:,0], jnp.arange(len(indices_nodes))].set(1)
-            Q = Q.at[indices_nodes[:,1], jnp.arange(len(indices_nodes))].set(-1)
-        else:
-            raise ValueError('restrictionType must be either "node" or "edge".')
+            if len(shape) == 1:
+                Q = csr_matrix((np.ones(shape[0]), (indices_nodes, np.arange(shape[0]))), shape=(self.n, shape[0]))
+            elif len(shape) == 2 and shape[1] == 2:
+                Q = csr_matrix((np.ones(shape[0]), (indices_nodes[:,0], np.arange(shape[0]))), shape=(self.n, shape[0])) + csr_matrix((-np.ones(shape[0]), (indices_nodes[:,1], np.arange(shape[0]))), shape=(self.n, shape[0]))
+            else:
+                raise ValueError('indicesNodes must be a 1D array or a 2D array with shape (integer, 2).')
+                
         return Q
     
     def _extended_hessian(self, Q):
@@ -207,47 +138,28 @@ class Circuit(object):
             Extended Hessian. H is a sparse matrix of size (n + len(indices_nodes)) x (n + len(indices_nodes)).
         
         '''
-        sparseExtendedHessian = bmat([[self._hessian(), Q], [Q.T, None]], format='csr', dtype=float)
-        return sparseExtendedHessian
-
-    def _jax_extended_hessian(self, Q):
-        ''' Extend the hessian of the network with the constraint matrix Q. 
-
-        Parameters
-        ----------
-        Q : 
-            Constraint matrix Q
-
-        Returns
-        -------
-        H : 
-            Extended Hessian. H is a dense matrix of size (n + len(indices_nodes)) x (n + len(indices_nodes)).
-        
-        '''
-        extendedHessian = jnp.block([[self._jax_hessian(), Q],[jnp.transpose(Q), jnp.zeros(shape=(jnp.shape(Q)[1],jnp.shape(Q)[1]))]])
-        # bmat([[self._hessian(), Q], [Q.T, None]], format='csr', dtype=float)
-        return extendedHessian
+        ext_hess = bmat([[self._hessian(), Q], [Q.T, None]], format='csr', dtype=float)
+        return ext_hess
 
     @staticmethod
-    def _sextended_hessian(hessian,Q):
+    def _s_extended_hessian(hessian,Q):
         ''' Extend the hessian of the network with the constraint matrix Q. 
 
         Parameters
         ----------
-        Q : 
+        hessian : jnp.array
+            Hessian of the network
+        Q : jnp.array
             Constraint matrix Q
 
         Returns
         -------
-        H : 
+        H : jnp.array
             Extended Hessian. H is a dense matrix of size (n + len(indices_nodes)) x (n + len(indices_nodes)).
         
         '''
-        extendedHessian = jnp.block([[hessian, Q],[jnp.transpose(Q), jnp.zeros(shape=(jnp.shape(Q)[1],jnp.shape(Q)[1]))]])
-        return extendedHessian
-
-    
-
+        ext_hess = jnp.block([[hessian, Q],[jnp.transpose(Q), jnp.zeros(shape=(jnp.shape(Q)[1],jnp.shape(Q)[1]))]])
+        return ext_hess
 
     
     '''
@@ -260,112 +172,130 @@ class Circuit(object):
 	*****************************************************************************************************
 	'''
 
-    def _solve_from_extended_H(self, H_extended, f):
-        ''' Solve the system with the extended Hessian and the source vector f.
-
+    def circuit_input(self, input_nodes, indices_nodes, current_bool):
+        ''' Compute the input vector f for the circuit. 
+        
         Parameters
         ----------
-        H_extended : scipy.sparse.csr_matrix
-            Extended Hessian
-        f : np.array
-            Source vector f. f has size n + len(indices_nodes).
+        input_nodes : np.array
+            Array with the current or voltages at the nodes specified by indices_nodes.
+        indices_nodes : np.array
+            Array with the indices of the nodes to be constrained. The nodes themselves are given by np.array(self.graph.nodes)[indices_nodes].
+        current_bool : np.array
+            Boolean array specifying if the input_nodes are currents or voltages. If an entry is True, the corresponding input_node is a current. If False, it is a voltage.
 
         Returns
         -------
-        x : np.array
-            Solution vector V. V has size n + len(indices_nodes).
+        f : np.array
+            Source vector f. f has size n + len(indices_nodes).
         '''
-        f_extended = np.hstack([np.zeros(self.n), f])
-        V = spsolve(H_extended, f_extended)
-        return V
+        n_voltage_input = len(current_bool) -(current_bool).sum()
+        f = np.zeros(self.n + n_voltage_input)
+        f[indices_nodes[current_bool]] = input_nodes[current_bool]
+        f[self.n:] = input_nodes[~current_bool]
+        
+        return f
 
+    @staticmethod
+    def s_circuit_input(input_nodes, indices_nodes, current_bool, n):
+        ''' Compute the input vector f for the circuit. 
+        
+        Parameters
+        ----------
+        input_nodes : np.array
+            Array with the current or voltages at the nodes specified by indices_nodes.
+        indices_nodes : np.array
+            Array with the indices of the nodes to be constrained. The nodes themselves are given by np.array(self.graph.nodes)[indices_nodes].
+        current_bool : np.array
+            Boolean array specifying if the input_nodes are currents or voltages. If an entry is True, the corresponding input_node is a current. If False, it is a voltage.
+        n : int
+            Number of nodes in the graph.
 
-    def solve(self, Q, f):
-        ''' Solve the circuit with the constraint matrix Q and the source vector f.
+        Returns
+        -------
+        f : np.array
+            Source vector f. f has size n + len(indices_nodes).
+        '''
+        n_voltage_input = len(current_bool) -(current_bool).sum()
+        f = jnp.zeros(n + n_voltage_input)
+        f = f.at[indices_nodes[current_bool]].set(input_nodes[current_bool])
+        f = f.at[n:].set(input_nodes[~current_bool])
+        
+        return f
+
+    @staticmethod
+    def s_circuit_input_batch(input_nodes, indices_nodes, current_bool, n):
+        batch_circuit_input = vmap(Circuit.s_circuit_input, in_axes=(0, None, None, None))
+        return batch_circuit_input(input_nodes, indices_nodes, current_bool, n)
+        
+    
+
+    def solve(self, Q, input_vector):
+        ''' Solve the circuit with the constraint matrix Q and the input_vector.
 
         Parameters
         ----------
         Q : scipy.sparse.csr_matrix
             Constraint matrix Q
-        f : np.array
-            Source vector f. f has size len(indices_nodes).
+        input_vector : np.array
+            Size self.n + len(indices_nodes).
+            First self.n entries correspond to imposed currents, the rest to imposed voltages.
 
         Returns
         -------
-        x : np.array
+        V : np.array
             Solution vector V. V has size n.
         '''
-        # check that the conductances have been set
-        try:
-            self.conductances
-        except AttributeError:
-            raise AttributeError('Conductances have not been set yet.')
-        # check that the source vector has the right size
-        if len(f) != Q.shape[1]:
-            raise ValueError('Source vector f has the wrong size.')
-        # extend the hessian
+        assert len(input_vector) == self.n + Q.shape[1], "Source vector f has the wrong size."
+
         H = self._extended_hessian(Q)
-        # extend f with n zeros
-        f_extended = np.hstack([np.zeros(self.n), f])
+        # f_extended = np.hstack([np.zeros(self.n), f])
         # solve the system
-        V = spsolve(H, f_extended)[:self.n]
-        return V
-
-    def jax_solve(self, Q, f):
-        ''' Solve the circuit with the constraint matrix Q and the source vector f.
-
-        Parameters
-        ----------
-        Q : jnp.array
-            Constraint matrix Q
-        f : np.array
-            Source vector f. f has size len(indices_nodes).
-
-        Returns
-        -------
-        x : np.array
-            Solution vector V. V has size n.
-        '''
-        # check that the conductances have been set
-        try:
-            self.conductances
-        except AttributeError:
-            raise AttributeError('Conductances have not been set yet.')
-        # check that the source vector has the right size
-        if len(f) != Q.shape[1]:
-            raise ValueError('Source vector f has the wrong size.')
-        # extend the hessian
-        H = self._jax_extended_hessian(Q)
-        # extend f with n zeros
-        f_extended = jnp.hstack([jnp.zeros(self.n), f])
-        # solve the system
-        V = jax.scipy.linalg.solve(H, f_extended)[:self.n]
+        V = spsolve(H, input_vector)[:self.n]
         return V
 
     @staticmethod
     @jit
-    def ssolve(conductances, incidence_matrix, Q, f):
-        ''' Solve the circuit with the constraint matrix Q and the source vector f.
+    def s_solve(conductances, incidence_matrix, Q, input_vector):
+        ''' Solve the circuit with the constraint matrix Q and the source vector input_vector.
 
         Parameters
         ----------
         Q : jnp.array
             Constraint matrix Q
-        f : np.array
-            Source vector f. f has size len(indices_nodes).
+        input_vector : np.array
+            Source vector input_vector. input_vector has size self.n + len(indices_nodes).
 
         Returns
         -------
-        x : np.array
+        V : np.array
             Solution vector V. V has size n.
         '''
-        # extend the hessian
-        H = Circuit._sextended_hessian(Circuit._shessian(conductances,incidence_matrix),Q)
-        # extend f with n zeros
-        f_extended = jnp.hstack([jnp.zeros(jnp.shape(incidence_matrix)[0]), f])
+        H = Circuit._s_extended_hessian(Circuit._s_hessian(conductances,incidence_matrix),Q)
+        # f_extended = jnp.hstack([jnp.zeros(jnp.shape(incidence_matrix)[0]), f])
         # solve the system
-        V = jax.scipy.linalg.solve(H, f_extended)[:jnp.shape(incidence_matrix)[0]]
+        V = jax.scipy.linalg.solve(H, input_vector)[:jnp.shape(incidence_matrix)[0]]
         return V
+
+    @staticmethod
+    @jit
+    def s_solve_batch(conductances, incidence_matrix, Q, input_vectors):
+        ''' Solve the circuit with the constraint matrix Q and the source vector input_vector.
+
+        Parameters
+        ----------
+        Q : jnp.array
+            Constraint matrix Q
+        input_vector : np.array
+            Source vector input_vector. input_vector has size self.n + len(indices_nodes).
+
+        Returns
+        -------
+        V : np.array
+            Solution vector V. V has size n.
+        '''
+        batch_solve = vmap(Circuit.s_solve, in_axes=(None, None, None, 0))
+        return batch_solve(conductances, incidence_matrix, Q, input_vectors)
 
     '''
 	*****************************************************************************************************
@@ -536,7 +466,7 @@ class Circuit(object):
         for i in range(len(all_possible_pairs)):
             f = np.random.rand(len(indices_nodes))
             # generate the constraint matrix
-            Q = self.constraint_matrix(indices_nodes, restrictionType = 'node')
+            Q = self.constraint_matrix(indices_nodes)#, restrictionType = 'node')
             # solve the system
             V_free = self.solve(Q, f)
             # compute the voltage drops square based on the free state voltages and the array_pair_indices_nodes

@@ -1,5 +1,4 @@
 import numpy as np
-# from .circuit_utils import Circuit
 from circuit_utils import Circuit
 from network_utils import *
 from tqdm import tqdm
@@ -8,15 +7,14 @@ import pickle
 from scipy.sparse import csr_matrix, csc_array
 import jax.numpy as jnp
 import jax
+from jax import jit, vmap
 import json
 import csv
-from jax import jit
-
 from scipy.sparse import hstack
 
 class CL(Circuit):
     '''
-    Class for coupled learning in linear circuits.
+    Class for linear learning circuits.
 
     Attributes
     ----------
@@ -29,7 +27,7 @@ class CL(Circuit):
     pts : np.array
         Positions of the nodes.
     '''
-    def __init__(self,graph, conductances, learning_rate=1.0, learning_step = 0, min_k = 1.e-6, max_k = 1.e6, name = 'CL', jax = False, losses = None, end_epoch = None, power = None, energy = None, best_conductances = None, best_error = None):
+    def __init__(self,graph, conductances, name = 'circuit', learning_rate=1.0, min_k = 1.e-6, max_k = 1.e6, jax = False, loss_history = None, checkpoint_iterations = None, power_history = None, energy_history = None, best_conductances = None, best_error = None):
         ''' Initialize the coupled learning circuit.
 
         Parameters
@@ -41,35 +39,34 @@ class CL(Circuit):
         '''
         super().__init__(graph, jax=jax)
         self.jax = jax
-        self.setConductances(conductances)
+        self.set_conductances(conductances)
+        self.name = name
         self.learning_rate = learning_rate
-        self.learning_step = learning_step
         
         self.min_k = min_k
         self.max_k = max_k
-        if losses is None:
-            self.losses = []
+        if loss_history is None:
+            self.loss_history = []
         else:
-            self.losses = losses
-        if end_epoch is None or end_epoch == []:
-            self.end_epoch = []
-            self.epoch = 0
+            self.loss_history = loss_history
+        if checkpoint_iterations is None or checkpoint_iterations == []:
+            self.checkpoint_iterations = []
+            self.learning_step = 0
         else:
-            self.epoch = end_epoch[-1]
-            self.end_epoch = end_epoch
-        if power is None or power == []:
-            self.power = []
+            self.learning_step = checkpoint_iterations[-1]
+            self.checkpoint_iterations = checkpoint_iterations
+        if power_history is None or power_history == []:
+            self.power_history = []
             self.current_power = 0
         else:
-            self.power = power
-            self.current_power = power[-1]
-        if energy is None or energy == []:
-            self.energy = []
+            self.power_history = power_history
+            self.current_power = power_history[-1]
+        if energy_history is None or energy_history == []:
+            self.energy_history = []
             self.current_energy = 0
         else:
-            self.energy = energy
-            self.current_energy = energy[-1]
-        self.name = name
+            self.energy_history = energy_history
+            self.current_energy = energy_history[-1]
         if best_conductances is None:
             self.best_conductances = self.conductances
         else:
@@ -78,16 +75,6 @@ class CL(Circuit):
             self.best_error = np.inf
         else:
             self.best_error = best_error
-    
-    def set_name(self, name):
-        ''' Set the name of the learning circuit.
-
-        Parameters
-        ----------
-        name : string
-            Name of the circuit.
-        '''
-        self.name = name
 
     def _clip_conductances(self):
         ''' Clip the conductances to be between min_k and max_k.
@@ -109,424 +96,82 @@ class CL(Circuit):
 	*****************************************************************************************************
     '''
 
-    def _add_source(self, indices_source, inputs_source):
-        ''' Add source nodes and their inputs to the circuit.
+    def set_inputs(self, indices_inputs, current_bool):
+        ''' Set the inputs of the circuit.
 
         Parameters
         ----------
-        indices_source : np.array
-            Indices of the nodes of the source.
-        inputs_source : np.array
-            Inputs of the source.
-        '''
-        # check they have the same length
-        assert len(indices_source) == len(inputs_source), 'indices_source and inputs_source must have the same length'
-        self.indices_source = indices_source
-        self.inputs_source = inputs_source
+        indices_inputs : np.array
+            Indices of the nodes that are inputs.
+        current_bool : np.array
+            Boolean array indicating if the input is a current source or a voltage source.
 
-    def _add_target(self, indices_target, outputs_target, target_type):
-        ''' Add target nodes and their outputs to the circuit.
-
-        Parameters
-        ----------
-        indices_target : np.array
-            Indices of the nodes of the target.
-        outputs_target : np.array
-            Outputs of the target.
-        target_type : string
-            target type, "node" or "edge"
-        '''
-        # check they have the same length
-        assert len(indices_target) == len(outputs_target), 'indices_target and outputs_target must have the same length'
-        self.indices_target = indices_target
-        self.outputs_target = outputs_target
-        # check that the target type is valid
-        assert target_type in ['node', 'edge'], 'target_type must be "node" or "edge"'
-        self.target_type = target_type
-        
-
-    def set_task(self, indices_source, inputs_source, indices_target, outputs_target, target_type='node', task_type = 'allostery'):
-        ''' Set the task of the circuit.
-
-        Parameters
-        ----------
-        indices_source : np.array
-            Indices of the nodes of the source.
-        inputs_source : np.array
-            Inputs of the source.
-        indices_target : np.array
-            If target is node, indices of the nodes of the target.
-            If target is edge, array with edge index, and nodes i, j. The voltage drop goes from i to j.
-        outputs_target : np.array
-            Outputs of the target.
-        target_type : string
-            target type, "node" or "edge"
-        task_type : string
-            task type, "allostery" or "regression"
-        
         Returns
         -------
-        Q_free : scipy.sparse.csr_matrix
-            Constraint matrix Q_free: a sparse constraint rectangular matrix of size n x len(indices_source). Its entries are only 1 or 0.
-        Q_clamped : scipy.sparse.csr_matrix
-            Constraint matrix Q_clamped: a sparse constraint rectangular matrix of size n x (len(indices_source) + len(indices_target)). Its entries are only 1 or 0.
+        Q_inputs : scipy.sparse.csr_matrix or jnp.array
+            Constraint matrix Q_inputs: a sparse constraint rectangular matrix of size n x len(indices_inputs[current_bool]). Its entries are only 1 or 0.
         '''
-        self.task_type = task_type
-        self._add_source(indices_source, inputs_source)
-        self._add_target(indices_target, outputs_target, target_type)
+        self.indices_inputs = indices_inputs
+        self.current_bool = current_bool
+        Q_inputs = self.constraint_matrix(indices_inputs[~current_bool])
+        self.Q_inputs = Q_inputs
+        return Q_inputs
 
-        if self.jax:
-            return self.jax_set_task(indices_source, inputs_source, indices_target, outputs_target, target_type)
-        else:
-            # Compute the constraint matrices
-            self.Q_free = self.constraint_matrix(self.indices_source)
-            if self.target_type == 'node':
-                self.Q_clamped = self.constraint_matrix(np.concatenate((self.indices_source, self.indices_target)))    
-            elif self.target_type == 'edge':
-                q_edge = self.constraint_matrix(indices_target, restrictionType='edge')
-                self.Q_clamped = hstack([self.Q_free, q_edge])
-
-            return self.Q_free, self.Q_clamped
-
-    def jax_set_task(self, indices_source, inputs_source, indices_target, outputs_target, target_type='node', task_type = 'allostery'):
-        ''' Set the task of the circuit.
+    def set_outputs(self, indices_outputs):
+        ''' Set the outputs of the circuit.
 
         Parameters
         ----------
-        indices_source : np.array
-            Indices of the nodes of the source.
-        inputs_source : np.array
-            Inputs of the source.
-        indices_target : np.array
-            If target is node, indices of the nodes of the target.
-            If target is edge, array with edge index, and nodes i, j. 
-        outputs_target : np.array
-            Outputs of the target.
-        target_type : string
-            target type, "node" or "edge"
-        task_type : string
-            task type, "allostery" or "regression" 
-        
+        indices_outputs : np.array
+            Indices of the nodes that are outputs.
+
         Returns
         -------
-        Q_free : scipy.sparse.csr_matrix
-            Constraint matrix Q_free: a sparse constraint rectangular matrix of size n x len(indices_source). Its entries are only 1 or 0.
-        Q_clamped : scipy.sparse.csr_matrix
-            Constraint matrix Q_clamped: a sparse constraint rectangular matrix of size n x (len(indices_source) + len(indices_target)). Its entries are only 1 or 0.
+        Q_outputs : scipy.sparse.csr_matrix or jnp.array
+            Constraint matrix Q_outputs: a sparse constraint rectangular matrix of size n x len(indices_outputs). Its entries are only 1 or 0.
         '''
-        self.task_type = task_type
-        self._add_source(indices_source, inputs_source)
-        self._add_target(indices_target, outputs_target, target_type)
-        # Compute the constraint matrices
-        self.Q_free = self.jax_constraint_matrix(self.indices_source)
-        if self.target_type == 'node':
-            self.Q_clamped = self.jax_constraint_matrix(jnp.concatenate((self.indices_source, self.indices_target)))    
-        elif self.target_type == 'edge':
-            q_edge = self.jax_constraint_matrix(indices_target, restrictionType='edge')
-            self.Q_clamped = jnp.concatenate([self.Q_free,q_edge], axis=1)
-
-        return self.Q_free, self.Q_clamped
-
-    def set_task_regression(self, indices_source, indices_target, target_type='node', task_type = 'regression', matrix = None):
-        ''' Set the task of the circuit for regression.
-
-        Parameters
-        ----------
-        indices_source : np.array
-            Indices of the nodes of the source.
-        indices_target : np.array
-            If target is node, indices of the nodes of the target.
-            If target is edge, array with edge index, and nodes i, j. 
-        target_type : string
-            target type, "node" or "edge"
-        task_type : string
-            task type, "allostery" or "regression"
-        matrix : np.array
-            Matrix for regression.
-        
-        Returns
-        -------
-        Q_free : scipy.sparse.csr_matrix
-            Constraint matrix Q_free: a sparse constraint rectangular matrix of size n x len(indices_source). Its entries are only 1 or 0.
-        Q_clamped : scipy.sparse.csr_matrix
-            Constraint matrix Q_clamped: a sparse constraint rectangular matrix of size n x (len(indices_source) + len(indices_target)). Its entries are only 1 or 0.
-        '''
-        self.task_type = task_type
-        self.target_type = target_type
-        self.indices_source = indices_source
-        self.indices_target = indices_target
-        # Compute the constraint matrices
-        self.Q_free = self.constraint_matrix(self.indices_source)
-        if self.target_type == 'node':
-            self.Q_clamped = self.constraint_matrix(np.concatenate((self.indices_source, self.indices_target)))    
-        elif self.target_type == 'edge':
-            q_edge = self.constraint_matrix(indices_target, restrictionType='edge')
-            self.Q_clamped = hstack([self.Q_free, q_edge])
-        
-        if matrix is not None:
-            self.set_regression_matrix(matrix)
-
-        return self.Q_free, self.Q_clamped
-
-    def jax_set_task_regression(self, indices_source, indices_target, target_type='node', task_type = 'regression', matrix = None):
-        ''' Set the task of the circuit for regression.
-
-        Parameters
-        ----------
-        indices_source : np.array
-            Indices of the nodes of the source.
-        indices_target : np.array
-            If target is node, indices of the nodes of the target.
-            If target is edge, array with edge index, and nodes i, j. 
-        target_type : string
-            target type, "node" or "edge"
-        task_type : string
-            task type, "allostery" or "regression"
-        matrix : np.array
-            Matrix for regression.
-        
-        Returns
-        -------
-        Q_free : scipy.sparse.csr_matrix
-            Constraint matrix Q_free: a sparse constraint rectangular matrix of size n x len(indices_source). Its entries are only 1 or 0.
-        Q_clamped : scipy.sparse.csr_matrix
-            Constraint matrix Q_clamped: a sparse constraint rectangular matrix of size n x (len(indices_source) + len(indices_target)). Its entries are only 1 or 0.
-        '''
-        self.task_type = task_type
-        self.target_type = target_type
-        self.indices_source = indices_source
-        self.indices_target = indices_target
-        # Compute the constraint matrices
-        self.Q_free = self.jax_constraint_matrix(self.indices_source)
-        if self.target_type == 'node':
-            self.Q_clamped = self.jax_constraint_matrix(jnp.concatenate((self.indices_source, self.indices_target)))    
-        elif self.target_type == 'edge':
-            q_edge = self.jax_constraint_matrix(indices_target, restrictionType='edge')
-            self.Q_clamped = jnp.concatenate([self.Q_free,q_edge], axis=1)
-        
-        if matrix is not None:
-            self.set_regression_matrix(matrix)
-
-        return self.Q_free, self.Q_clamped
+        self.indices_outputs = indices_outputs
+        Q_outputs = self.constraint_matrix(indices_outputs)
+        self.Q_outputs = Q_outputs
+        return Q_outputs
     
-    def set_regression_matrix(self, matrix):
-        ''' Set the matrix for regression.
+    def square_error(self, predicted_output, true_output):
+        ''' Compute the square error. '''
+        return 0.5*(predicted_output - true_output)**2
 
-        Parameters
-        ----------
-        matrix : np.array
-            Matrix for regression.
-        '''
-        self.outputs_target = matrix
-    
-    def get_free_state(self, inputs_source = None):
-        ''' Return the free state of the circuit for the current task. '''
-        # determine if a task was given
-        if not hasattr(self, 'Q_free'):
-            raise ValueError('No task was given to the circuit. Use set_task(indices_source, inputs_source, indices_target, outputs_target) to set the task.')
-        if inputs_source is None:
-            return self.solve(self.Q_free, self.inputs_source)
-        else:
-            return self.solve(self.Q_free, inputs_source)
-    
-    def get_power_state(self):
-        ''' Return the power state of the circuit for the current task. '''
-        free_state = self.get_free_state()
-        voltage_drop_free = self.incidence_matrix.T.dot(free_state)
-        return self.conductances*(voltage_drop_free**2)
+    def mse(self, predicted_output, true_output):
+        ''' Compute the mean square error. '''
+        return np.mean(self.square_error(predicted_output, true_output))
 
-    def MSE_loss(self, free_state):
-        ''' Compute the MSE loss. '''
-        if self.target_type == 'node':
-            return 0.5*np.mean((free_state[self.indices_target] - self.outputs_target)**2)
-        elif self.target_type == 'edge':
-            # freeState_DV = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
-            freeState_DV = free_state[self.indices_target[:,0]] - free_state[self.indices_target[:,1]]
-            return 0.5*np.mean((freeState_DV - self.outputs_target)**2)
-
-    def compute_MSE(self, output_pred, output_true):
-        ''' Compute the MSE loss. '''
-        return 0.5*np.mean((output_pred - output_true)**2) # by default computes the mean of the flattened array
-
-    def compute_MSE_train_batch(self, train_data):
-        ''' Compute the MSE loss for a batch of train data. '''
-        n_data = len(train_data)
-        input_data = train_data[:,:len(self.indices_source)]
-        output_data = train_data[:,len(self.indices_source):]
-        h_extended = self._extended_hessian(self.Q_free)
-        loss = 0
-        for inp, out_true in zip(input_data, output_data):
-            out_pred = self._solve_from_extended_H(h_extended, inp)[self.indices_target]
-            loss += self.compute_MSE(out_pred, out_true)
-        return loss/n_data
-
-    def jax_MSE_loss(self, conductances):
-        ''' Compute the MSE loss. '''
-        print("This function is deprecated. Use MSE instead.")
-        self.setConductances(conductances)
-        free_state = self.jax_solve(self.Q_free, self.inputs_source)
-        if self.target_type == 'node':
-            return 0.5*jnp.mean((free_state[self.indices_target] - self.outputs_target)**2)
-        elif self.target_type == 'edge':
-            # freeState_DV = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
-            freeState_DV = free_state[self.indices_target[:,0]] - free_state[self.indices_target[:,1]]
-            return 0.5*jnp.mean((freeState_DV - self.outputs_target)**2)
-
-    # static methods for jit compilation
     @staticmethod
-    @jit
-    def MSE_NA(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target):
-        ''' Compute the MSE loss for Node Allostery. '''
-        free_state = Circuit.ssolve(conductances, incidence_matrix, Q, inputs_source)
-        return 0.5*jnp.mean((free_state[indices_target] - outputs_target)**2)
+    def s_mse_single(conductances, incidence_matrix, Q_inputs, Q_outputs, inputs, true_output):
+        ''' Compute the mean square error. '''
+        # input_vector =  self.circuit_input(inputs, self.indices_inputs, self.current_bool)
+        V = Circuit.s_solve(conductances, incidence_matrix, Q_inputs, inputs)
+        predicted_output = Q_outputs.T.dot(V)
+        return 0.5*jnp.mean((predicted_output - true_output)**2)
 
     @staticmethod
     @jit
-    def MSE_EA(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target):
-        ''' Compute the MSE loss for Edge Allostery'''
-        free_state = Circuit.ssolve(conductances, incidence_matrix, Q, inputs_source)
-        freeState_DV = free_state[indices_target[:,0]] - free_state[indices_target[:,1]]
-        return 0.5*jnp.mean((freeState_DV - outputs_target)**2)
+    def s_mse(conductances, incidence_matrix, Q_inputs, Q_outputs, inputs, true_outputs):
+        ''' Compute the mean square error for batches of inputs and outputs. '''
+        batch_mse = vmap(CL.s_mse_single, in_axes=(None, None, None, None, 0, 0))
+        mse_values = batch_mse(conductances, incidence_matrix, Q_inputs, Q_outputs, inputs, true_outputs)
+        return jnp.mean(mse_values) 
 
     @staticmethod
     @jit
-    def MSE_REGRESSION(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target):
-        ''' Compute the MSE loss for regression'''
-        free_state = Circuit.ssolve(conductances, incidence_matrix, Q, inputs_source)
-        return 0.5*jnp.mean((free_state[indices_target] - outputs_target.dot(inputs_source))**2)
-    
-    @staticmethod
-    def MSE(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target, target_type, task_type = 'allostery'):
-        ''' Compute the MSE loss for Node Allostery, Edge Allostery, or Linear Regression.'''
-        if task_type == 'allostery':
-            if target_type == 'node':
-                return CL.MSE_NA(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
-            elif target_type == 'edge':
-                return CL.MSE_EA(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
-            else:
-                raise Exception('target_type must be "node" or "edge"' )
-        elif task_type == 'regression':
-            if target_type == 'node':
-                return CL.MSE_REGRESSION(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
-            else:
-                raise Exception('target_type must be "node" for regression' )
+    def s_grad_mse(conductances, incidence_matrix, Q_inputs, Q_outputs, inputs, true_output):
+        ''' Compute the gradient of the mean square error. '''
+        grad_func = jax.grad(CL.s_mse, argnums=0)
+        return grad_func(conductances, incidence_matrix, Q_inputs, Q_outputs, inputs, true_output)
 
     @staticmethod
-    def gradient_MSE(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target, target_type, task_type = 'allostery'):
-        ''' Compute the gradient of the MSE loss for Node Allostery, Edge Allostery, or Linear Regression.'''
-        if task_type == 'allostery':
-            if target_type == 'node':
-                grad_func = jax.grad(CL.MSE_NA, argnums=0)
-            elif target_type == 'edge':
-                grad_func = jax.grad(CL.MSE_EA, argnums=0)
-            else:
-                raise ValueError('target_type must be "node" or "edge"')
-            return grad_func(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
-        elif task_type == 'regression':
-            if target_type == 'node':
-                grad_func = jax.grad(CL.MSE_REGRESSION, argnums=0)
-            else:
-                raise ValueError('target_type must be "node" for regression')
-            return grad_func(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
-
-    @staticmethod
-    def hessian_MSE(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target, target_type, task_type = 'allostery'):
-        ''' Compute the hessian of the MSE loss for Node Allostery, Edge Allostery, or Linear Regression.'''
-        if task_type == 'allostery':
-            if target_type == 'node':
-                hessian_func = jax.hessian(CL.MSE_NA, argnums=0)
-            elif target_type == 'edge':
-                hessian_func = jax.hessian(CL.MSE_EA, argnums=0)
-            else:
-                raise ValueError('target_type must be "node" or "edge"')
-            return hessian_func(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
-        elif task_type == 'regression':
-            if target_type == 'node':
-                hessian_func = jax.hessian(CL.MSE_REGRESSION, argnums=0)
-            else:
-                raise ValueError('target_type must be "node" for regression')
-            return hessian_func(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
-
-    @staticmethod
-    def mse_batch(output_pred,output_true):
-        ''' Compute the MSE loss. '''
-        return 0.5*jnp.mean((output_pred - output_true)**2)
-    
-    @staticmethod
-    def mse_from_input_batch(conductances, incidence_matrix, Q, indices_target, input_data, true_output_data):
-        ''' Compute the MSE loss. '''
-        output_data = jnp.array([Circuit.ssolve(conductances, incidence_matrix, Q, inp)[indices_target] for inp in input_data])
-        return CL.mse_batch(output_data, true_output_data)
-
-    @staticmethod
-    def gradient_mse_batch(conductances, incidence_matrix, Q, indices_target, input_data, true_output_data):
-        ''' Compute the gradient of the MSE loss. '''
-        grad_func = jax.grad(CL.mse_from_input_batch, argnums=0)
-        return grad_func(conductances, incidence_matrix, Q, indices_target, input_data, true_output_data)
-
-    @staticmethod
-    def hessian_mse_batch(conductances, incidence_matrix, Q, indices_target, input_data, true_output_data):
-        ''' Compute the hessian of the MSE loss. '''
-        hessian_func = jax.hessian(CL.mse_from_input_batch, argnums=0)
-        return hessian_func(conductances, incidence_matrix, Q, indices_target, input_data, true_output_data)
-
-    def jaxify(self):
-        ''' Jaxify the circuit. '''
-        
-        converted = False
-        if not self.jax:
-            self.jax = True
-            converted = True
-        
-        if not isinstance(self.Q_free, jnp.ndarray):
-            self.Q_free = jnp.array(self.Q_free.todense())
-            converted = True
-
-        if not isinstance(self.Q_clamped, jnp.ndarray):
-            self.Q_clamped = jnp.array(self.Q_clamped.todense())
-            converted = True
-
-        if not isinstance(self.incidence_matrix, jnp.ndarray):
-            self.incidence_matrix = jnp.array(self.incidence_matrix.todense())
-            converted = True
-
-        if not isinstance(self.conductances, jnp.ndarray):
-            self.conductances = jnp.array(self.conductances)
-            converted = True
-
-        if converted:
-            print('Converted to jax')
-        else:
-            print('Already jaxified')
-
-    def sparsify(self):
-        ''' Sparsify the circuit. '''
-        converted = False
-        if self.jax:
-            self.jax = False
-            converted = True
-        
-        if isinstance(self.Q_free, jnp.ndarray):
-            self.Q_free = csr_matrix(self.Q_free, dtype = np.float64)
-            converted = True
-
-        if isinstance(self.Q_clamped, jnp.ndarray):
-            self.Q_clamped = csr_matrix(self.Q_clamped, dtype = np.float64)
-            converted = True
-
-        if isinstance(self.incidence_matrix, jnp.ndarray):
-            self.incidence_matrix = csc_array(self.incidence_matrix, dtype = np.float64)
-            converted = True
-
-        if isinstance(self.conductances, jnp.ndarray):
-            self.conductances = np.array(self.conductances, dtype = np.float64)
-            converted = True
-
-        if converted:
-            print('Converted to sparse')
-        else:
-            print('Already sparse')
-        
+    @jit
+    def s_hessian_mse(conductances, incidence_matrix, Q_inputs, Q_outputs, inputs, true_output):
+        ''' Compute the hessian of the mean square error. '''
+        hessian_func = jax.hessian(CL.s_mse, argnums=0)
+        return hessian_func(conductances, incidence_matrix, Q_inputs, Q_outputs, inputs, true_output)
         
     
     '''
@@ -539,895 +184,179 @@ class CL(Circuit):
 	*****************************************************************************************************
     '''
 
-
-    ########################################        
-    ########### COUPLED LEARNING ############
-    ########################################
-
-    def _step_CL_batch(self, train_data, eta = 0.001):
-        ''' Perform a step of coupled learning. '''
-        n_data = len(train_data)
-        input_data = train_data[:,:len(self.indices_source)]
-        output_data = train_data[:,len(self.indices_source):]
+    def _dk_CL(self, eta, batch, Q_clamped):
+        ''' Compute the change in conductances, dk, according to the input,output data in the batch using Coupled Learning.
+        The new conductances are computed as: k_new = k_old - learning_rate*dk. 
         
-        delta_conductances = np.zeros(self.ne)
-        for inputs_source, outputs_target in zip(input_data, output_data):
-            # free state
-            free_state = self.solve(self.Q_free, inputs_source)
-            # clamped state
-            if self.target_type == 'node':
-                nudge = free_state[self.indices_target] + eta * (outputs_target - free_state[self.indices_target])
-            elif self.target_type == 'edge':
-                # DP = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
-                DP = free_state[self.indices_target[:,0]] - free_state[self.indices_target[:,1]]
-                nudge = DP + eta * (self.outputs_target - DP)
-            clamped_state = self.solve(self.Q_clamped, np.concatenate((inputs_source, nudge)))
+        Parameters
+        ----------
+        learning_rate : float
+            Learning rate.
+        eta : float
+            Nudge rate.
+        batch : tuple of np.array
+            Tuple of input_data and true_output data.
+        Q_clamped : scipy.sparse.csr_matrix
+            Constraint matrix Q_clamped: a sparse constraint rectangular matrix of size n x (len(voltage_indices_inputs) + len(indices_outputs)).
 
-            # voltage drop
-            # ROOM FOR IMPROVEMENT? WE ARE TRANSPOSING THE INCIDENCE MATRIX AT EACH STEP
+        Returns
+        -------
+        delta_conductances: np.array
+            Change in conductances.
+        mse : float
+            Mean square error.
+        '''
+        delta_conductances = np.zeros(self.ne)
+        batch_size = len(batch[0])
+        mse = 0
+        power = 0
+
+        for input_data, true_output in zip(*batch):
+            input_vector = self.circuit_input(input_data, self.indices_inputs, self.current_bool)
+            free_state = self.solve(self.Q_inputs, input_vector)
+            output_data = self.Q_outputs.T.dot(free_state)
+            mse += self.mse(output_data, true_output)
+            nudge = output_data + eta * (true_output - output_data)
+            clamped_input_vector = np.concatenate((input_vector, nudge))
+            clamped_state = self.solve(Q_clamped, clamped_input_vector)
             voltage_drop_free = self.incidence_matrix.T.dot(free_state)
             voltage_drop_clamped = self.incidence_matrix.T.dot(clamped_state)
+            power = power + np.sum(self.conductances*(voltage_drop_free**2))
+            self.current_energy += power
+            delta_conductances = delta_conductances + 1.0/eta * (voltage_drop_clamped**2 - voltage_drop_free**2)
 
-            # power
-            self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-            # energy
-            self.current_energy += self.current_power
+        delta_conductances = delta_conductances/batch_size
+        mse = mse/batch_size
+        self.current_power = power/batch_size
 
-            # Update the conductances
-            delta_conductances += -1.0/eta * (voltage_drop_clamped**2 - voltage_drop_free**2)
-        
-        delta_conductances /= n_data
-        self.conductances = self.conductances + self.learning_rate*delta_conductances
-        self._clip_conductances()
+        return delta_conductances, mse
 
-        # Update the learning step
-        self.learning_step += 1
-
-        return free_state, voltage_drop_free, delta_conductances, self.conductances
-
-    def iterate_CL_batch(self, train_data, n_steps, batch_size, eta = 0.001):
-        ''' Iterate coupled learning for n_steps, considering batch_size samples from train_data. '''
-        for i in range(n_steps):
-            # choose batch_size samples from train_data
-            batch = train_data[np.random.choice(len(train_data), batch_size, replace=False)]
-            free_state, voltage_drop_free , delta_conductances , conductances = self._step_CL_batch(batch, eta)
-        return free_state, voltage_drop_free , delta_conductances , conductances
-
-    def train_CL_batch(self, train_data, n_epochs, n_steps_per_epoch, batch_size, eta, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = 'trained_circuit'):
-        ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of coupled learning.
-        If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
+    def train_CL(self, learning_rate, eta, train_data, n_epochs, save_global = False, save_state = False, save_path = 'trained_circuit', save_every = 1):
+        ''' Train the circuit for n_epochs. Each epoch consists of one passage of all the train_data.
+        Have n_save_points save points, where the state of the circuit is saved if save_state is True.
         '''
-        if pbar:
-            epochs = tqdm(range(n_epochs))
-        else:
-            epochs = range(n_epochs)
 
-        if log_spaced:
-            n_steps = n_epochs * n_steps_per_epoch
-            n_steps_per_epoch = log_partition(n_steps, n_epochs)
-        else:
-            actual_steps_per_epoch = n_steps_per_epoch
+        epochs = tqdm(range(n_epochs))
 
-        if not hasattr(self, 'outputs_target'):
-            print("Warning: the regression matrix has not been set as an attribute. You may forget the specific regression task when reading from a file.\n You can use self.set_regression_matrix(matrix).")
-
-
-        if self.jax: # Dense and JIT training (gpu)
-            # abort, not implemented
-            raise NotImplementedError
-            # initial state
-            if self.learning_step == 0:
-                self.end_epoch.append(self.learning_step)
-                loss = CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type)
-                if loss < self.best_error:
-                    self.best_error = loss
-                    self.best_conductances = self.conductances
-                self.losses.append(loss)
-                if save_state:
-                    self.save_local(save_path+'.csv')
-            else: #to avoid double counting the initial state
-                # remove the last element of power and energy
-                self.power.pop()
-                self.energy.pop()
-                # set the current power and energy to the last element
-                self.current_power = self.power[-1]
-                self.current_energy = self.energy[-1]
-
-            #training
-            for epoch in epochs:
-                if log_spaced:
-                    actual_steps_per_epoch = n_steps_per_epoch[epoch]
-                conductances = self._siterate_CL(actual_steps_per_epoch, eta, self.target_type)
-                loss = CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type)
-                if loss < self.best_error:
-                    self.best_error = loss
-                    self.best_conductances = self.conductances
-                self.losses.append(loss)
-                self.power.append(self.current_power)
-                self.energy.append(self.current_energy)
-                if verbose:
-                    print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
-                self.epoch += 1
-                self.end_epoch.append(self.learning_step)
-                if save_state:
-                    # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
-                    self.save_local(save_path+'.csv')
-
-            # at the end of training, compute the current power and current energy, and save global and save graph
-            free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source)
-            voltage_drop_free = free_state.dot(self.incidence_matrix)
-            self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-            self.current_energy += self.current_power
-            self.power.append(self.current_power)
-            self.energy.append(self.current_energy)
-
-            if save_global:
-                self.save_global(save_path+'_global.json')
-                self.save_graph(save_path+'_graph.json')
-            return self.losses, conductances
-        else: # Sparse and no JIT training (no gpu)
-            # initial state
-            if self.learning_step == 0:
-                self.end_epoch.append(self.learning_step)
-                batch = train_data[np.random.choice(len(train_data), batch_size, replace=False)]
-                loss = self.compute_MSE_train_batch(batch)
-                if loss < self.best_error:
-                    self.best_error = loss
-                    self.best_conductances = self.conductances
-                self.losses.append(loss)
-                if save_state:
-                    self.save_local(save_path+'.csv')
-            else: #to avoid double counting the initial state
-                # remove the last element of power and energy
-                self.power.pop()
-                self.energy.pop()
-                # set the current power and energy to the last element
-                self.current_power = self.power[-1]
-                self.current_energy = self.energy[-1]
-
-            #training
-            for epoch in epochs:
-                if log_spaced:
-                    actual_steps_per_epoch = n_steps_per_epoch[epoch]
-                free_state, voltage_drop_free , delta_conductances , conductances = self.iterate_CL_batch(train_data, actual_steps_per_epoch, batch_size, eta)
-                batch = train_data[np.random.choice(len(train_data), batch_size, replace=False)]
-                loss = self.compute_MSE_train_batch(batch)
-                if loss < self.best_error:
-                    self.best_error = loss
-                    self.best_conductances = self.conductances
-                self.losses.append(loss)
-                self.power.append(self.current_power)
-                self.energy.append(self.current_energy)
-                if verbose:
-                    print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
-                self.epoch += 1
-                self.end_epoch.append(self.learning_step)
-                if save_state:
-                    # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
-                    self.save_local(save_path+'.csv')
-
-            # at the end of training, compute the current power and current energy, and save global and save graph
-            self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-            self.current_energy += self.current_power
-            self.power.append(self.current_power)
-            self.energy.append(self.current_energy)
-
-            if save_global:
-                self.save_global(save_path+'_global.json')
-                self.save_graph(save_path+'_graph.json')
-            return self.losses, conductances
-
-    def _step_CL(self, eta = 0.001):
-        ''' Perform a step of coupled learning. '''
-        # free state. Notice that it is not worth using get_free_state, since it checks if a task was given at each call.
-        free_state = self.solve(self.Q_free, self.inputs_source)
-
-        if self.target_type == 'node':
-            nudge = free_state[self.indices_target] + eta * (self.outputs_target - free_state[self.indices_target])
-
-        elif self.target_type == 'edge':
-
-            # DP = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
-            DP = free_state[self.indices_target[:,0]] - free_state[self.indices_target[:,1]]
-            nudge = DP + eta * (self.outputs_target - DP)
-
-        clamped_state = self.solve(self.Q_clamped, np.concatenate((self.inputs_source, nudge)))
-
-        # voltage drop
-        # ROOM FOR IMPROVEMENT? WE ARE TRANSPOSING THE INCIDENCE MATRIX AT EACH STEP
-        voltage_drop_free = self.incidence_matrix.T.dot(free_state)
-        voltage_drop_clamped = self.incidence_matrix.T.dot(clamped_state)
-
-        # power
-        self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-        # energy
-        self.current_energy += self.current_power
-
-        # Update the conductances
-        delta_conductances = -1.0/eta * (voltage_drop_clamped**2 - voltage_drop_free**2)
-        self.conductances = self.conductances + self.learning_rate*delta_conductances
-        self._clip_conductances()
-
-        # Update the learning step
-        self.learning_step += 1
-        
-        return free_state, voltage_drop_free, delta_conductances, self.conductances
-
-    def _step_ACL(self, eta = 0.001):
-        ''' Perform a step of anti coupled learning. '''
-        # free state. Notice that it is not worth using get_free_state, since it checks if a task was given at each call.
-        free_state = self.solve(self.Q_free, self.inputs_source)
-
-        if self.target_type == 'node':
-            nudge = free_state[self.indices_target] + eta * (self.outputs_target - free_state[self.indices_target])
-
-        elif self.target_type == 'edge':
-
-            # DP = free_state[self.indices_target[:,1]] - free_state[self.indices_target[:,2]]
-            DP = free_state[self.indices_target[:,0]] - free_state[self.indices_target[:,1]]
-            nudge = DP + eta * (self.outputs_target - DP)
-
-        clamped_state = self.solve(self.Q_clamped, np.concatenate((self.inputs_source, nudge)))
-
-        # voltage drop
-        # ROOM FOR IMPROVEMENT? WE ARE TRANSPOSING THE INCIDENCE MATRIX AT EACH STEP
-        voltage_drop_free = self.incidence_matrix.T.dot(free_state)
-        voltage_drop_clamped = self.incidence_matrix.T.dot(clamped_state)
-
-        # power
-        self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-        # energy
-        self.current_energy += self.current_power
-
-        # Update the conductances
-        delta_conductances = -1.0/eta * (voltage_drop_free**2 - voltage_drop_clamped**2)
-        self.conductances = self.conductances + self.learning_rate*delta_conductances
-        self._clip_conductances()
-
-        # Update the learning step
-        self.learning_step += 1
-        
-        return free_state, voltage_drop_free, delta_conductances, self.conductances
-
-    def iterate_CL(self, n_steps, eta = 0.001):
-        ''' Iterate coupled learning for n_steps. '''
-        for i in range(n_steps):
-            free_state, voltage_drop_free , delta_conductances , conductances = self._step_CL(eta)
-        return free_state, voltage_drop_free , delta_conductances , conductances
-
-    def iterate_ACL(self, n_steps, eta = 0.001):
-        ''' Iterate anti coupled learning for n_steps. '''
-        for i in range(n_steps):
-            free_state, voltage_drop_free , delta_conductances , conductances = self._step_ACL(eta)
-        return free_state, voltage_drop_free , delta_conductances , conductances
-    
-
-    def train(self, n_epochs, n_steps_per_epoch, eta = 0.001, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = 'trained_circuit'):
-        ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of coupled learning.
-        If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
-        '''
-        if pbar:
-            epochs = tqdm(range(n_epochs))
-        else:
-            epochs = range(n_epochs)
-
-        # initial state
-        if self.learning_step == 0:
-            self.end_epoch.append(self.learning_step)
-            self.losses.append(self.MSE_loss(self.get_free_state()))
-            if save_state:
-                self.save_local(save_path+'.csv')
-        else: #to avoid double counting the initial state
-            # remove the last element of power and energy
-            self.power.pop()
-            self.energy.pop()
-            # set the current power and energy to the last element
-            self.current_power = self.power[-1]
-            self.current_energy = self.energy[-1]
-
-        if log_spaced:
-            n_steps = n_epochs * n_steps_per_epoch
-            n_steps_per_epoch = log_partition(n_steps, n_epochs)
-        else:
-            actual_steps_per_epoch = n_steps_per_epoch
-        
-        #training
+        # training
+        self.Q_clamped = hstack([self.Q_inputs, self.Q_outputs])
+        n_batches = len(train_data)
         for epoch in epochs:
-            if log_spaced:
-                actual_steps_per_epoch = n_steps_per_epoch[epoch]
-            free_state, voltage_drop_free , delta_conductances , conductances = self.iterate_CL(actual_steps_per_epoch, eta)
-            self.losses.append(self.MSE_loss(free_state))
-            self.power.append(self.current_power)
-            self.energy.append(self.current_energy)
-            if verbose:
-                print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
-            self.epoch += 1
-            self.end_epoch.append(self.learning_step)
-            if save_state:
-                # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
-                self.save_local(save_path+'.csv')
-    
-        # at the end of training, compute the current power and current energy, and save global and save graph
-        self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-        self.current_energy += self.current_power
-        self.power.append(self.current_power)
-        self.energy.append(self.current_energy)
-
+            indices = np.random.permutation(n_batches)
+            loss_per_epoch = 0
+            power_per_epoch = 0
+            for i in indices:
+                batch = train_data[i]
+                delta_conductances, loss = self._dk_CL(eta, batch, self.Q_clamped)
+                loss_per_epoch += loss
+                power_per_epoch += self.current_power
+                # the loss is prior to the update of the conductances
+                if loss < self.best_error:
+                    self.best_error = loss
+                    self.best_conductances = self.conductances
+                # update
+                self.conductances = self.conductances - learning_rate*delta_conductances
+                self._clip_conductances()
+                self.learning_step = self.learning_step + 1
+            
+            loss_per_epoch = loss_per_epoch/n_batches
+            power_per_epoch = power_per_epoch/n_batches
+            # save
+            if epoch % save_every == 0:
+                self.loss_history.append(loss_per_epoch)
+                self.checkpoint_iterations.append(self.learning_step - 1)
+                self.power_history.append(power_per_epoch)
+                self.energy_history.append(self.current_energy)
+                if save_state:
+                    self.save_local(save_path+'.csv')
+            epochs.set_description('Epoch: {}/{} | Loss: {:.2e}'.format(epoch,n_epochs, loss_per_epoch))
+        # end of training
         if save_global:
             self.save_global(save_path+'_global.json')
             self.save_graph(save_path+'_graph.json')
-        
-        # print warning: function deprecated
-        print("This function is deprecated. Use train_CL instead.")
-        return self.losses, free_state, voltage_drop_free , delta_conductances , conductances
 
-    @staticmethod
-    @jit
-    def _sstep_CL_NA(conductances, incidence_matrix, Q_free, Q_clamped, inputs_source, indices_target, outputs_target, learning_rate, min_k, max_k, eta):
-        ''' Perform a step of coupled learning for Node Allostery. '''
-        free_state = Circuit.ssolve(conductances, incidence_matrix, Q_free, inputs_source)
-
-        nudge = free_state[indices_target] + eta * (outputs_target - free_state[indices_target])
-
-        clamped_state = Circuit.ssolve(conductances, incidence_matrix,Q_clamped, jnp.concatenate((inputs_source, nudge)))
-
-        # ROOM FOR IMPROVEMENT? WE ARE TRANSPOSING THE INCIDENCE MATRIX AT EACH STEP
-        voltage_drop_free = incidence_matrix.T.dot(free_state)
-        voltage_drop_clamped = incidence_matrix.T.dot(clamped_state)
-
-        # power
-        current_power = np.sum(conductances*(voltage_drop_free**2))
-
-        # Update the conductances
-        delta_conductances = -1.0/eta * (voltage_drop_clamped**2 - voltage_drop_free**2)
-        new_conductances = conductances + learning_rate*delta_conductances
-        new_conductances = jnp.clip(new_conductances, min_k, max_k)
-
-        return free_state, voltage_drop_free, delta_conductances, new_conductances, current_power
-
-    @staticmethod
-    @jit
-    def _sstep_CL_EA(conductances, incidence_matrix, Q_free, Q_clamped, inputs_source, indices_target, outputs_target, learning_rate, min_k, max_k, eta):
-        ''' Perform a step of coupled learning for Edge Allostery '''
-        free_state = Circuit.ssolve(conductances, incidence_matrix, Q_free, inputs_source)
-
-        DP = free_state[indices_target[:,0]] - free_state[indices_target[:,1]]
-        nudge = DP + eta * (outputs_target - DP)
-
-        clamped_state = Circuit.ssolve(conductances, incidence_matrix,Q_clamped, jnp.concatenate((inputs_source, nudge)))
-
-        # ROOM FOR IMPROVEMENT? WE ARE TRANSPOSING THE INCIDENCE MATRIX AT EACH STEP
-        voltage_drop_free = incidence_matrix.T.dot(free_state)
-        voltage_drop_clamped = incidence_matrix.T.dot(clamped_state)
-
-        # power
-        current_power = np.sum(conductances*(voltage_drop_free**2))
-
-        # Update the conductances
-        delta_conductances = -1.0/eta * (voltage_drop_clamped**2 - voltage_drop_free**2)
-        new_conductances = conductances + learning_rate*delta_conductances
-        new_conductances = jnp.clip(new_conductances, min_k, max_k)
-
-        return free_state, voltage_drop_free, delta_conductances, new_conductances, current_power
-
-    def _siterate_CL(self, n_steps, eta, task):
-        ''' Iterate coupled learning for n_steps.
-        task is a string: "node" (node allostery) or "edge" (edge allostery)
-        '''
-        if task == "node":
-            for i in range(n_steps):
-                _, _, _, self.conductances, current_power = CL._sstep_CL_NA(self.conductances, self.incidence_matrix, self.Q_free, self.Q_clamped, self.inputs_source, self.indices_target, self.outputs_target, self.learning_rate, self.min_k, self.max_k, eta)
-                self.current_power = current_power
-                self.current_energy += self.current_power
-                self.learning_step += 1
-        elif task == "edge":
-            for i in range(n_steps):
-                _, _, _, self.conductances, current_power = CL._sstep_CL_EA(self.conductances, self.incidence_matrix, self.Q_free, self.Q_clamped, self.inputs_source, self.indices_target, self.outputs_target, self.learning_rate, self.min_k, self.max_k, eta)
-                self.current_power = current_power
-                self.current_energy += self.current_power
-                self.learning_step += 1
-        else:
-            raise Exception('task must be "node" or "edge"')
-        return self.conductances
-
+        return self.checkpoint_iterations, self.loss_history, self.power_history, self.energy_history
     
-    def train_CL(self, n_epochs, n_steps_per_epoch, eta, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = 'trained_circuit'):
-        ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of coupled learning.
-        If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
-        '''
-        if pbar:
-            epochs = tqdm(range(n_epochs))
-        else:
-            epochs = range(n_epochs)
-
-        if log_spaced:
-            n_steps = n_epochs * n_steps_per_epoch
-            n_steps_per_epoch = log_partition(n_steps, n_epochs)
-        else:
-            actual_steps_per_epoch = n_steps_per_epoch
-
-        if self.jax: # Dense and JIT training (gpu)
-            # initial state
-            if self.learning_step == 0:
-                self.end_epoch.append(self.learning_step)
-                loss = CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type)
-                if loss < self.best_error:
-                    self.best_error = loss
-                    self.best_conductances = self.conductances
-                self.losses.append(loss)
-                if save_state:
-                    self.save_local(save_path+'.csv')
-            else: #to avoid double counting the initial state
-                # remove the last element of power and energy
-                self.power.pop()
-                self.energy.pop()
-                # set the current power and energy to the last element
-                self.current_power = self.power[-1]
-                self.current_energy = self.energy[-1]
-
-            #training
-            for epoch in epochs:
-                if log_spaced:
-                    actual_steps_per_epoch = n_steps_per_epoch[epoch]
-                conductances = self._siterate_CL(actual_steps_per_epoch, eta, self.target_type)
-                loss = CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type)
-                if loss < self.best_error:
-                    self.best_error = loss
-                    self.best_conductances = self.conductances
-                self.losses.append(loss)
-                self.power.append(self.current_power)
-                self.energy.append(self.current_energy)
-                if verbose:
-                    print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
-                self.epoch += 1
-                self.end_epoch.append(self.learning_step)
-                if save_state:
-                    # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
-                    self.save_local(save_path+'.csv')
-
-            # at the end of training, compute the current power and current energy, and save global and save graph
-            free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source)
-            voltage_drop_free = free_state.dot(self.incidence_matrix)
-            self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-            self.current_energy += self.current_power
-            self.power.append(self.current_power)
-            self.energy.append(self.current_energy)
-
-            if save_global:
-                self.save_global(save_path+'_global.json')
-                self.save_graph(save_path+'_graph.json')
-            return self.losses, conductances
-        else: # Sparse and no JIT training (no gpu)
-            # initial state
-            if self.learning_step == 0:
-                self.end_epoch.append(self.learning_step)
-                loss = self.MSE_loss(self.get_free_state())
-                if loss < self.best_error:
-                    self.best_error = loss
-                    self.best_conductances = self.conductances
-                self.losses.append(loss)
-                if save_state:
-                    self.save_local(save_path+'.csv')
-            else: #to avoid double counting the initial state
-                # remove the last element of power and energy
-                self.power.pop()
-                self.energy.pop()
-                # set the current power and energy to the last element
-                self.current_power = self.power[-1]
-                self.current_energy = self.energy[-1]
-
-            #training
-            for epoch in epochs:
-                if log_spaced:
-                    actual_steps_per_epoch = n_steps_per_epoch[epoch]
-                free_state, voltage_drop_free , delta_conductances , conductances = self.iterate_CL(actual_steps_per_epoch, eta)
-                loss = self.MSE_loss(free_state)
-                if loss < self.best_error:
-                    self.best_error = loss
-                    self.best_conductances = self.conductances
-                self.losses.append(loss)
-                self.power.append(self.current_power)
-                self.energy.append(self.current_energy)
-                if verbose:
-                    print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
-                self.epoch += 1
-                self.end_epoch.append(self.learning_step)
-                if save_state:
-                    # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
-                    self.save_local(save_path+'.csv')
-
-            # at the end of training, compute the current power and current energy, and save global and save graph
-            self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-            self.current_energy += self.current_power
-            self.power.append(self.current_power)
-            self.energy.append(self.current_energy)
-
-            if save_global:
-                self.save_global(save_path+'_global.json')
-                self.save_graph(save_path+'_graph.json')
-            return self.losses, conductances
-
-    def train_ACL(self, n_epochs, n_steps_per_epoch, eta, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = 'trained_circuit'):
-        ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of anti coupled learning.
-        If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
-        '''
-        if pbar:
-            epochs = tqdm(range(n_epochs))
-        else:
-            epochs = range(n_epochs)
-
-        if log_spaced:
-            n_steps = n_epochs * n_steps_per_epoch
-            n_steps_per_epoch = log_partition(n_steps, n_epochs)
-        else:
-            actual_steps_per_epoch = n_steps_per_epoch
-
-        if self.jax: # Dense and JIT training (gpu)
-            # abort
-            raise NotImplementedError
-        else: # Sparse and no JIT training (no gpu)
-            # initial state
-            if self.learning_step == 0:
-                self.end_epoch.append(self.learning_step)
-                loss = self.MSE_loss(self.get_free_state())
-                if loss < self.best_error:
-                    self.best_error = loss
-                    self.best_conductances = self.conductances
-                self.losses.append(loss)
-                if save_state:
-                    self.save_local(save_path+'.csv')
-            else: #to avoid double counting the initial state
-                # remove the last element of power and energy
-                self.power.pop()
-                self.energy.pop()
-                # set the current power and energy to the last element
-                self.current_power = self.power[-1]
-                self.current_energy = self.energy[-1]
-
-            #training
-            for epoch in epochs:
-                if log_spaced:
-                    actual_steps_per_epoch = n_steps_per_epoch[epoch]
-                free_state, voltage_drop_free , delta_conductances , conductances = self.iterate_ACL(actual_steps_per_epoch, eta)
-                loss = self.MSE_loss(free_state)
-                if loss < self.best_error:
-                    self.best_error = loss
-                    self.best_conductances = self.conductances
-                self.losses.append(loss)
-                self.power.append(self.current_power)
-                self.energy.append(self.current_energy)
-                if verbose:
-                    print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
-                self.epoch += 1
-                self.end_epoch.append(self.learning_step)
-                if save_state:
-                    # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
-                    self.save_local(save_path+'.csv')
-
-            # at the end of training, compute the current power and current energy, and save global and save graph
-            self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-            self.current_energy += self.current_power
-            self.power.append(self.current_power)
-            self.energy.append(self.current_energy)
-
-            if save_global:
-                self.save_global(save_path+'_global.json')
-                self.save_graph(save_path+'_graph.json')
-            return self.losses, conductances
-
-
-
-
-
-
-
-    ########################################        
-    ########### GRADIENT DESCENT ############
-    ########################################
-
-
-
-
-
     @staticmethod
     @jit
-    def _sstep_GD_NA(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target, learning_rate, min_k, max_k):
-        ''' Perform a step of gradient descent over the MSE for Node Allostery '''
-        new_conductances = conductances - learning_rate*jax.grad(CL.MSE_NA)(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
-        new_conductances = jnp.clip(new_conductances, min_k, max_k)
-        return new_conductances
-
-    @staticmethod
-    @jit
-    def _sstep_GD_EA(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target, learning_rate, min_k, max_k):
-        ''' Perform a step of gradient descent over the MSE for Edge Allostery '''
-        new_conductances = conductances - learning_rate*jax.grad(CL.MSE_EA)(conductances, incidence_matrix, Q, inputs_source, indices_target, outputs_target)
-        new_conductances = jnp.clip(new_conductances, min_k, max_k)
-        return new_conductances
-
-    def _siterate_GD(self, n_steps, task):
-        ''' Iterate gradient descent for n_steps.
-        task is a string: "node" (node allostery) or "edge" (edge allostery)
-        '''
-        if task == "node":
-            for i in range(n_steps):
-                free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source)
-                voltage_drop_free = free_state.dot(self.incidence_matrix)
-                self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-                self.current_energy += self.current_power
-                self.learning_step += 1
-                self.conductances = CL._sstep_GD_NA(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.learning_rate, self.min_k, self.max_k)
-        elif task == "edge":
-            for i in range(n_steps):
-                free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source)
-                voltage_drop_free = free_state.dot(self.incidence_matrix)
-                self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-                self.current_energy += self.current_power
-                self.learning_step += 1
-                self.conductances = CL._sstep_GD_EA(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.learning_rate, self.min_k, self.max_k) 
-        else:
-            raise Exception('task must be "node" or "edge"')
-        return self.conductances
-
-    @staticmethod
-    @jit
-    def _sstep_GD_mse(conductances, incidence_matrix, Q, indices_target, learning_rate, min_k, max_k,input_data,true_output_data):
-        ''' Perform a step of gradient descent over a generic mse'''
-        new_conductances = conductances - learning_rate*CL.gradient_mse_batch(conductances, incidence_matrix, Q, indices_target, input_data, true_output_data)
-        new_conductances = jnp.clip(new_conductances, min_k, max_k)
-        return new_conductances
-
-    def _siterate_GD_mse_batch(self, train_data, n_steps, batch_size):
-        ''' Iterate gradient descent for n_steps, considering batch_size samples from train_data. '''
-        for i in range(n_steps):
-            batch = train_data[np.random.choice(len(train_data), batch_size, replace=False)]
-            input_data = batch[:,:len(self.indices_source)]
-            true_output_data = batch[:,len(self.indices_source):]
-            free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, input_data[0])
-            voltage_drop_free = free_state.dot(self.incidence_matrix)
-            self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-            self.current_energy += self.current_power
-            self.learning_step += 1
-            self.conductances = CL._sstep_GD_mse(self.conductances, self.incidence_matrix, self.Q_free, self.indices_target, self.learning_rate, self.min_k, self.max_k, input_data, true_output_data)
-        return self.conductances
-
-
-    def train_GD(self, n_epochs, n_steps_per_epoch, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = 'trained_circuit'):
-        ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of gradient descent.
-        If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
-        '''
-        if pbar:
-            epochs = tqdm(range(n_epochs))
-        else:
-            epochs = range(n_epochs)
-
-        if log_spaced:
-            n_steps = n_epochs * n_steps_per_epoch
-            n_steps_per_epoch = log_partition(n_steps, n_epochs)
-        else:
-            actual_steps_per_epoch = n_steps_per_epoch
+    def _s_dk_GD(circuit_batch, conductances, incidence_matrix, Q_inputs, Q_outputs, indices_inputs, current_bool, n):
+        ''' Compute the change in conductances, dk, according to the input,output data in the batch using Gradient Descent.
         
+        Parameters
+        ----------
+        circuit_batch : tuple of np.array
+            Tuple of input_data and true_output data.
 
+        Returns
+        -------
+        delta_conductances: np.array
+            Change in conductances.
+        '''
+        delta_conductances = CL.s_grad_mse(conductances, incidence_matrix, Q_inputs, Q_outputs, circuit_batch[0], circuit_batch[1])
+        return delta_conductances
 
-        # initial state
-        if self.learning_step == 0:
-            self.end_epoch.append(self.learning_step)
-            loss = CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type)
-            if loss < self.best_error:
-                self.best_error = loss
-                self.best_conductances = self.conductances
-            self.losses.append(loss)
-            if save_state:
-                self.save_local(save_path+'.csv')
-        else: #to avoid double counting the initial state
-            # remove the last element of power and energy
-            self.power.pop()
-            self.energy.pop()
-            # set the current power and energy to the last element
-            self.current_power = self.power[-1]
-            self.current_energy = self.energy[-1]
+    def train_GD(self, learning_rate, train_data, n_epochs, save_global = False, save_state = False, save_path = 'trained_circuit', save_every = 1):
+        ''' Train the circuit for n_epochs. Each epoch consists of one passage of all the train_data.
+        Have n_save_points save points, where the state of the circuit is saved if save_state is True.
+        '''
 
-        #training
+        epochs = tqdm(range(n_epochs))
+
+        # training
+        n_batches = len(train_data) 
         for epoch in epochs:
-            if log_spaced:
-                actual_steps_per_epoch = n_steps_per_epoch[epoch]
-            conductances = self._siterate_GD(actual_steps_per_epoch, self.target_type)
-            loss = CL.MSE(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source, self.indices_target, self.outputs_target, self.target_type)
-            if loss < self.best_error:
-                self.best_error = loss
-                self.best_conductances = self.conductances
-            self.losses.append(loss)
-            self.power.append(self.current_power)
-            self.energy.append(self.current_energy)
-            if verbose:
-                print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
-            self.epoch += 1
-            self.end_epoch.append(self.learning_step)
-            if save_state:
-                # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
-                self.save_local(save_path+'.csv')
-        # at the end of training, compute the current power and current energy, and save global and save graph
-        free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, self.inputs_source)
-        voltage_drop_free = free_state.dot(self.incidence_matrix)
-        self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-        self.current_energy += self.current_power
-        self.power.append(self.current_power)
-        self.energy.append(self.current_energy)
+            indices = np.random.permutation(n_batches)
+            loss_per_epoch = 0
+            power_per_epoch = 0
+            for i in indices:
+                batch = train_data[i]
+                circuit_batch = (Circuit.s_circuit_input_batch(batch[0], self.indices_inputs, self.current_bool, self.n), batch[1])
+                free_states = Circuit.s_solve_batch(self.conductances, self.incidence_matrix, self.Q_inputs, circuit_batch[0])
+                power_array = (free_states.dot(self.incidence_matrix)**2).dot(self.conductances)
+                self.current_power = np.mean(power_array)
+                self.current_energy += np.sum(power_array)
+                loss = self.mse(free_states.dot(self.Q_outputs),circuit_batch[1])
+                loss_per_epoch += loss
+                power_per_epoch += self.current_power
+                # the loss is prior to the update of the conductances
+                if loss < self.best_error:
+                    self.best_error = loss
+                    self.best_conductances = self.conductances
+                # update
+                delta_conductances = self._s_dk_GD(circuit_batch, self.conductances, self.incidence_matrix, self.Q_inputs, self.Q_outputs, self.indices_inputs, self.current_bool, self.n)
+                self.conductances = self.conductances - learning_rate*delta_conductances
+                self._jax_clip_conductances()
+                self.learning_step = self.learning_step + 1
+                
+            loss_per_epoch = loss_per_epoch/n_batches
+            power_per_epoch = power_per_epoch/n_batches
+            # save
+            if epoch % save_every == 0:
+                self.loss_history.append(loss_per_epoch)
+                self.checkpoint_iterations.append(self.learning_step - 1)
+                self.power_history.append(power_per_epoch)
+                self.energy_history.append(self.current_energy)
+                if save_state:
+                    self.save_local(save_path+'.csv')
+            epochs.set_description('Epoch: {}/{} | Loss: {:.2e}'.format(epoch,n_epochs, loss_per_epoch))
 
+        # end of training
         if save_global:
             self.save_global(save_path+'_global.json')
             self.save_graph(save_path+'_graph.json')
-        return self.losses, conductances
 
-    def train_GD_batch(self, train_data, n_epochs, n_steps_per_epoch, batch_size, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = 'trained_circuit'):
-        ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of gradient descent.
-        If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
-        '''
-        if pbar:
-            epochs = tqdm(range(n_epochs))
-        else:
-            epochs = range(n_epochs)
-
-        if log_spaced:
-            n_steps = n_epochs * n_steps_per_epoch
-            n_steps_per_epoch = log_partition(n_steps, n_epochs)
-        else:
-            actual_steps_per_epoch = n_steps_per_epoch
-        
-
-
-        # initial state
-        if self.learning_step == 0:
-            self.end_epoch.append(self.learning_step)
-            batch = train_data[np.random.choice(len(train_data), batch_size, replace=False)]
-            input_data = batch[:,:len(self.indices_source)]
-            true_output_data = batch[:,len(self.indices_source):]
-            loss = CL.mse_from_input_batch(self.conductances, self.incidence_matrix, self.Q_free, self.indices_target, input_data, true_output_data)
-            if loss < self.best_error:
-                self.best_error = loss
-                self.best_conductances = self.conductances
-            self.losses.append(loss)
-            if save_state:
-                self.save_local(save_path+'.csv')
-        else:
-            # remove the last element of power and energy
-            self.power.pop()
-            self.energy.pop()
-            # set the current power and energy to the last element
-            self.current_power = self.power[-1]
-            self.current_energy = self.energy[-1]
-
-        #training
-        for epoch in epochs:
-            if log_spaced:
-                actual_steps_per_epoch = n_steps_per_epoch[epoch]
-            conductances = self._siterate_GD_mse_batch(train_data, actual_steps_per_epoch, batch_size)
-            batch = train_data[np.random.choice(len(train_data), batch_size, replace=False)]
-            input_data = batch[:,:len(self.indices_source)]
-            true_output_data = batch[:,len(self.indices_source):]
-            loss = CL.mse_from_input_batch(self.conductances, self.incidence_matrix, self.Q_free, self.indices_target, input_data, true_output_data)
-            if loss < self.best_error:
-                self.best_error = loss
-                self.best_conductances = self.conductances
-            self.losses.append(loss)
-            self.power.append(self.current_power)
-            self.energy.append(self.current_energy)
-            if verbose:
-                print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
-            self.epoch += 1
-            self.end_epoch.append(self.learning_step)
-            if save_state:
-                self.save_local(save_path+'.csv')
-
-         # at the end of training, compute the current power and current energy, and save global and save graph
-        free_state = Circuit.ssolve(self.conductances, self.incidence_matrix, self.Q_free, input_data[0])
-        voltage_drop_free = free_state.dot(self.incidence_matrix)
-        self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-        self.current_energy += self.current_power
-        self.power.append(self.current_power)
-        self.energy.append(self.current_energy)
-
-        if save_global:
-            self.save_global(save_path+'_global.json')
-            self.save_graph(save_path+'_graph.json')
-        return self.losses, conductances
-        
-
+        return self.checkpoint_iterations, self.loss_history, self.power_history, self.energy_history
 
     def reset_training(self):
         ''' Reset the training. '''
         self.learning_step = 0
-        self.epoch = 0
-        self.end_epoch = []
-        self.losses = []
-        self.power = []
-        self.energy = []
+        self.checkpoint_iterations = []
+        self.loss_history = []
+        self.power_history = []
+        self.energy_history = []
         self.current_power = 0
         self.current_energy = 0
 
-
-    # JUST FOR THE RECORD. TO BE DELETED AT SOME POINT
-
-    # def _step_GD(self):
-    #     ''' Perform a step of gradient descent over the MSE. '''
-    #     # free state. Notice that it is not worth using get_free_state, since it checks if a task was given at each call.
-    #     free_state = self.solve(self.Q_free, self.inputs_source)
-    #     # power and energy prior to the update
-    #     # WARNING: I'M NOT SURE WHY JAX DOT OF (N,) AND (M, N) GIVES THE SAME RESULT AS NUMPY DOT  (M, N) AND (N,), BUT IT SAVES A TRANSPOSITION
-    #     voltage_drop_free = free_state.dot(self.incidence_matrix)
-    #     self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-    #     self.current_energy += self.current_power
-    #     # update the conductances
-    #     self.conductances = self.conductances - self.learning_rate*jax.grad(self.jax_MSE_loss)(self.conductances)
-    #     self.conductances = jnp.clip(self.conductances, self.min_k, self.max_k)
-    #     self.learning_step += 1
-
-    #     return self.conductances
-        
-
-    # def iterate_GD(self, n_steps):
-    #     ''' Iterate gradient descent for n_steps. '''
-    #     for i in range(n_steps):
-    #         conductances = self._step_GD()
-    #     return conductances
-
-    # def train_GD(self, n_epochs, n_steps_per_epoch, verbose = True, pbar = False, log_spaced = False, save_global = False, save_state = False, save_path = None):
-    #     ''' Train the circuit for n_epochs. Each epoch consists of n_steps_per_epoch steps of gradient descent.
-    #     If log_spaced is True, n_steps_per_epoch is overwritten and the number of steps per epoch is log-spaced, such that the total number of steps is n_steps_per_epoch * n_epochs.
-    #     '''
-    #     if pbar:
-    #         epochs = tqdm(range(n_epochs))
-    #     else:
-    #         epochs = range(n_epochs)
-
-    #     if log_spaced:
-    #         n_steps = n_epochs * n_steps_per_epoch
-    #         n_steps_per_epoch = log_partition(n_steps, n_epochs)
-    #     else:
-    #         actual_steps_per_epoch = n_steps_per_epoch
-        
-
-
-    #     # initial state
-    #     if self.learning_step == 0:
-    #         self.end_epoch.append(self.learning_step)
-    #         self.losses.append(float(self.jax_MSE_loss(self.conductances)))
-    #         if save_state:
-    #             self.save_local(save_path+'.csv')
-    #     else: #to avoid double counting the initial state
-    #         # remove the last element of power and energy
-    #         self.power.pop()
-    #         self.energy.pop()
-    #         # set the current power and energy to the last element
-    #         self.current_power = self.power[-1]
-    #         self.current_energy = self.energy[-1]
-
-    #     #training
-    #     for epoch in epochs:
-    #         if log_spaced:
-    #             actual_steps_per_epoch = n_steps_per_epoch[epoch]
-    #         conductances = self.iterate_GD(actual_steps_per_epoch)
-    #         self.losses.append(float(self.jax_MSE_loss(conductances)))
-    #         self.power.append(self.current_power)
-    #         self.energy.append(self.current_energy)
-    #         if verbose:
-    #             print('Epoch: {}/{} | Loss: {}'.format(epoch,n_epochs-1, self.losses[-1]))
-    #         self.epoch += 1
-    #         self.end_epoch.append(self.learning_step)
-    #         if save_state:
-    #             # self.save(save_path+'_epoch_'+str(epoch)+'.pkl')
-    #             self.save_local(save_path+'.csv')
-    #     # at the end of training, compute the current power and current energy, and save global and save graph
-    #     voltage_drop_free = self.get_free_state().dot(self.incidence_matrix)
-    #     self.current_power = np.sum(self.conductances*(voltage_drop_free**2))
-    #     self.current_energy += self.current_power
-    #     self.power.append(self.current_power)
-    #     self.energy.append(self.current_energy)
-
-    #     if save_global:
-    #         self.save_global(save_path+'_global.json')
-    #         self.save_graph(save_path+'_graph.json')
-    #     return self.losses, conductances
 
     '''
 	*****************************************************************************************************
@@ -1628,6 +557,73 @@ class CL(Circuit):
             fig.savefig(filename, dpi = 300)
 
 
+    '''
+	*****************************************************************************************************
+	*****************************************************************************************************
+
+										JAX TO SPARSE AND VICEVERSA
+
+	*****************************************************************************************************
+	*****************************************************************************************************
+    '''
+
+    def jaxify(self):
+        ''' Jaxify the circuit. '''
+        
+        converted = False
+        if not self.jax:
+            self.jax = True
+            converted = True
+        
+        if not isinstance(self.Q_inputs, jnp.ndarray):
+            self.Q_inputs = jnp.array(self.Q_inputs.todense())
+            converted = True
+
+        if not isinstance(self.Q_clamped, jnp.ndarray):
+            self.Q_clamped = jnp.array(self.Q_clamped.todense())
+            converted = True
+
+        if not isinstance(self.incidence_matrix, jnp.ndarray):
+            self.incidence_matrix = jnp.array(self.incidence_matrix.todense())
+            converted = True
+
+        if not isinstance(self.conductances, jnp.ndarray):
+            self.conductances = jnp.array(self.conductances)
+            converted = True
+
+        if converted:
+            print('Converted to jax')
+        else:
+            print('Already jaxified')
+
+    def sparsify(self):
+        ''' Sparsify the circuit. '''
+        converted = False
+        if self.jax:
+            self.jax = False
+            converted = True
+        
+        if isinstance(self.Q_inputs, jnp.ndarray):
+            self.Q_inputs = csr_matrix(self.Q_inputs, dtype = np.float64)
+            converted = True
+
+        if isinstance(self.Q_clamped, jnp.ndarray):
+            self.Q_clamped = csr_matrix(self.Q_clamped, dtype = np.float64)
+            converted = True
+
+        if isinstance(self.incidence_matrix, jnp.ndarray):
+            self.incidence_matrix = csc_array(self.incidence_matrix, dtype = np.float64)
+            converted = True
+
+        if isinstance(self.conductances, jnp.ndarray):
+            self.conductances = np.array(self.conductances, dtype = np.float64)
+            converted = True
+
+        if converted:
+            print('Converted to sparse')
+        else:
+            print('Already sparse')
+        
 
 
 '''
@@ -1640,6 +636,44 @@ class CL(Circuit):
 *****************************************************************************************************
 '''
 
+def split_data_into_batches( input_data, output_data, batch_size):
+        '''
+        Convert the data into batches.
+
+        Parameters
+        ----------
+        input_data : np.array
+            Input data with dimensions (n_data, len(indices_inputs))
+        output_data : np.array
+            Output data with dimensions (n_data, len(indices_outputs))
+        batch_size : int
+            The size of each batch.
+
+        Returns
+        -------
+        batches : list of tuples
+            List of batches, each containing a tuple of (input_batch, output_batch).
+        '''
+        n_data = len(input_data)
+        if n_data != len(output_data):
+            raise ValueError("Input and output data must have the same length.")
+        if n_data < batch_size:
+            raise ValueError("Batch size must be smaller than the length of the data.")
+
+        n_batches = n_data // batch_size
+        batches = [
+            (input_data[i * batch_size: (i + 1) * batch_size],
+             output_data[i * batch_size: (i + 1) * batch_size])
+            for i in range(n_batches)
+        ]
+
+        # Check if there are leftover data points after full batches
+        if n_data % batch_size != 0:
+            batches.append(
+                (input_data[n_batches * batch_size:], output_data[n_batches * batch_size:])
+            )
+
+        return batches
 
 def load_circuit(path):
     ''' Load a circuit. '''
